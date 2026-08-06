@@ -1,0 +1,72 @@
+id = "davidolrik.window-title"
+name = "Herdr Window Title"
+version = "0.1.0"
+# [[startup]] delivery requires herdr 0.7.5; everything else works on 0.7.1.
+min_herdr_version = "0.7.5"
+description = "Set the terminal window title from an HCL template fed with herdr state (focused space, focused tab, agent attention counts) and the user's shell environment."
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["go", "build", "-o", "bin/herdr-window-title", "."]
+platforms = ["linux", "macos"]
+
+# One idempotent reconcile handles every trigger: read config, harvest env,
+# snapshot herdr, evaluate the template, push the title only when it changed.
+# The event name is argv[1] for logging; it does not alter behavior, except
+# "refresh" which bypasses the shell-environment cache.
+[[startup]]
+command = ["./bin/herdr-window-title", "startup"]
+
+# Focused space or its label changed.
+[[events]]
+on = "workspace.focused"
+command = ["./bin/herdr-window-title", "workspace.focused"]
+
+[[events]]
+on = "workspace.renamed"
+command = ["./bin/herdr-window-title", "workspace.renamed"]
+
+# Focused tab or its label changed.
+[[events]]
+on = "tab.focused"
+command = ["./bin/herdr-window-title", "tab.focused"]
+
+[[events]]
+on = "tab.renamed"
+command = ["./bin/herdr-window-title", "tab.renamed"]
+
+# Agent attention counts changed. pane.closed/pane.exited cover an agent
+# disappearing; there is no dedicated agent-removed event.
+[[events]]
+on = "pane.agent_detected"
+command = ["./bin/herdr-window-title", "pane.agent_detected"]
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["./bin/herdr-window-title", "pane.agent_status_changed"]
+
+[[events]]
+on = "pane.closed"
+command = ["./bin/herdr-window-title", "pane.closed"]
+
+[[events]]
+on = "pane.exited"
+command = ["./bin/herdr-window-title", "pane.exited"]
+
+# Re-render on demand with a fresh shell environment — for external changes
+# herdr cannot see, e.g. an Overseer context/location switch:
+#   herdr plugin action invoke davidolrik.window-title.refresh
+[[actions]]
+id = "refresh"
+title = "Window title: refresh now"
+contexts = ["global"]
+command = ["./bin/herdr-window-title", "refresh"]
+
+# Write the fully-documented default config into the plugin's config dir
+# (never overwrites an existing config.hcl):
+#   herdr plugin action invoke davidolrik.window-title.init-config
+[[actions]]
+id = "init-config"
+title = "Window title: create default config file"
+contexts = ["global"]
+command = ["./bin/herdr-window-title", "init"]
