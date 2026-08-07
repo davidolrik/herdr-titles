@@ -1,0 +1,42 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # fetch-or-build.sh derives the download URL from the manifest version,
+      # so a tag that doesn't match it would publish assets no installer finds.
+      - name: Verify tag matches manifest version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          manifest="$(sed -n 's/^version = "\([^"]*\)".*/\1/p' herdr-plugin.toml | head -1)"
+          if [ "$tag" != "$manifest" ]; then
+            echo "tag v$tag does not match herdr-plugin.toml version $manifest" >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Run tests
+        run: go test ./...
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

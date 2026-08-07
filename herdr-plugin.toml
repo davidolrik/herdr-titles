@@ -6,8 +6,11 @@ min_herdr_version = "0.7.5"
 description = "Set the terminal window title from an HCL template fed with herdr state (focused space, focused tab, agent attention counts) and the user's shell environment."
 platforms = ["linux", "macos"]
 
+# Downloads the prebuilt, checksum-verified release binary for this version
+# and platform (needs only sh + curl); falls back to `go build` for dev
+# checkouts and platforms without a release asset.
 [[build]]
-command = ["go", "build", "-o", "bin/herdr-window-title", "."]
+command = ["sh", "scripts/fetch-or-build.sh"]
 platforms = ["linux", "macos"]
 
 # One idempotent reconcile handles every trigger: read config, harvest env,

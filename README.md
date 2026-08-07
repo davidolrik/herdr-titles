@@ -19,13 +19,23 @@ mysession : Work @ HQ › myproject › 1 › ×2 ✓1
 ## Install
 
 ```sh
-herdr plugin link /path/to/herdr-window-title
+herdr plugin install davidolrik/herdr-window-title
 ```
 
-The manifest's build step compiles the binary with `go build` (Go must be on
-the herdr server's PATH). The plugin then reacts to workspace/tab focus and
-rename events and to agent status changes; the title is only pushed when it
-actually changed.
+The install step downloads the prebuilt, checksum-verified binary for your
+platform from this repo's releases — only `sh` and `curl` are needed, not Go.
+When no release asset matches (a dev checkout, an unusual platform, offline),
+it falls back to `go build`.
+
+For development, link a local checkout instead:
+
+```sh
+herdr plugin link /path/to/herdr-window-title
+go build -o bin/herdr-window-title .   # `plugin link` does not run the build step
+```
+
+The plugin reacts to workspace/tab focus and rename events and to agent status
+changes; the title is only pushed when it actually changed.
 
 ## Configure
 

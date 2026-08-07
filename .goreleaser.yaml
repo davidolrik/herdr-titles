@@ -1,0 +1,28 @@
+# Release binaries for the herdr plugin install path: scripts/fetch-or-build.sh
+# downloads these raw (unarchived) binaries by name, so the name_template here
+# and the asset name composed in that script must stay in sync.
+version: 2
+
+project_name: herdr-window-title
+
+builds:
+  - binary: herdr-window-title
+    main: .
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - formats: [binary]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github-native
