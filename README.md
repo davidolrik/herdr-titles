@@ -3,7 +3,7 @@
 A [herdr](https://herdr.dev) plugin that sets the terminal window title from an
 HCL template, combining live herdr state with the user's shell environment:
 
-```
+```text
 mysession : Work @ HQ › myproject › 1 › ×2 ✓1
 └─ base name ┘ └ env ─┘  └ space ┘ └tab┘ └ attn ┘
 ```
