@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"time"
 
 	"github.com/hashicorp/hcl/v2"
@@ -57,7 +58,10 @@ attention {
   scope    = "all"
   # Herdr's own "symbols" status indicators (src/ui/status.rs) — the style
   # herdr uses when color isn't available, which a window title never has.
+  # Every state has an icon; only the statuses listed above are shown.
   icons = {
+    idle    = "○"
+    working = "◐"
     blocked = "×"
     done    = "✓"
     unknown = "·"
@@ -73,12 +77,44 @@ type Config struct {
 	Statuses   []string
 	Scope      string // "all" or "focused-space"
 	Icons      map[string]string
+	Tabs       *TabsConfig
 }
 
 type rawConfig struct {
 	Template  hcl.Expression `hcl:"template,optional"`
 	Env       *rawEnv        `hcl:"env,block"`
 	Attention *rawAttention  `hcl:"attention,block"`
+	Tabs      *rawTabs       `hcl:"tabs,block"`
+}
+
+// Pointer fields distinguish "absent" from a deliberate zero value (enabled =
+// false, fallback = "").
+type rawTabs struct {
+	Enabled          *bool             `hcl:"enabled,optional"`
+	ShowProgramArgs  *bool             `hcl:"show_program_args,optional"`
+	MaxNameLen       *int              `hcl:"max_name_len,optional"`
+	ShellName        string            `hcl:"shell_name,optional"`
+	HideShell        *bool             `hcl:"hide_shell,optional"`
+	Shells           []string          `hcl:"shells,optional"`
+	NameOnlyPrograms []string          `hcl:"name_only_programs,optional"`
+	IgnoredPrograms  []string          `hcl:"ignored_programs,optional"`
+	Aliases          map[string]string `hcl:"aliases,optional"`
+	Substitutions    []rawSubstitution `hcl:"substitute,block"`
+	AgentTitles      *bool             `hcl:"agent_titles,optional"`
+	AgentTitleMaxLen *int              `hcl:"agent_title_max_len,optional"`
+	Icons            *rawTabIcons      `hcl:"icons,block"`
+}
+
+type rawSubstitution struct {
+	Pattern string `hcl:"pattern"`
+	Replace string `hcl:"replace"`
+}
+
+type rawTabIcons struct {
+	Enabled  *bool             `hcl:"enabled,optional"`
+	Style    string            `hcl:"style,optional"`
+	Fallback *string           `hcl:"fallback,optional"`
+	Map      map[string]string `hcl:"map,optional"`
 }
 
 type rawEnv struct {
@@ -169,5 +205,73 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf(`%s: attention.scope must be "all" or "focused-space", got %q`, path, cfg.Scope)
 	}
 
+	cfg.Tabs, err = resolveTabs(raw.Tabs, path, shell)
+	if err != nil {
+		return nil, err
+	}
+
 	return cfg, nil
+}
+
+// resolveTabs merges a parsed tabs block over the built-in defaults.
+func resolveTabs(raw *rawTabs, path, shell string) (*TabsConfig, error) {
+	tabs := DefaultTabsConfig()
+	tabs.ShellName = filepath.Base(shell)
+	if tabs.ShellName == "" || tabs.ShellName == "." {
+		tabs.ShellName = "zsh"
+	}
+	if raw == nil {
+		return tabs, nil
+	}
+
+	setBool := func(dst *bool, src *bool) {
+		if src != nil {
+			*dst = *src
+		}
+	}
+	setBool(&tabs.Enabled, raw.Enabled)
+	setBool(&tabs.ShowProgramArgs, raw.ShowProgramArgs)
+	setBool(&tabs.HideShell, raw.HideShell)
+	setBool(&tabs.AgentTitles, raw.AgentTitles)
+	if raw.MaxNameLen != nil {
+		tabs.MaxNameLen = *raw.MaxNameLen
+	}
+	if raw.AgentTitleMaxLen != nil {
+		tabs.AgentTitleMaxLen = *raw.AgentTitleMaxLen
+	}
+	if raw.ShellName != "" {
+		tabs.ShellName = raw.ShellName
+	}
+	if raw.Shells != nil {
+		tabs.Shells = raw.Shells
+	}
+	if raw.NameOnlyPrograms != nil {
+		tabs.NameOnlyPrograms = raw.NameOnlyPrograms
+	}
+	if raw.IgnoredPrograms != nil {
+		tabs.IgnoredPrograms = raw.IgnoredPrograms
+	}
+	if raw.Aliases != nil {
+		tabs.Aliases = raw.Aliases
+	}
+	for _, sub := range raw.Substitutions {
+		pattern, err := regexp.Compile(sub.Pattern)
+		if err != nil {
+			return nil, fmt.Errorf("%s: tabs.substitute pattern %q: %w", path, sub.Pattern, err)
+		}
+		tabs.Substitutions = append(tabs.Substitutions, Substitution{Pattern: pattern, Replace: sub.Replace})
+	}
+	if raw.Icons != nil {
+		setBool(&tabs.Icons.Enabled, raw.Icons.Enabled)
+		if raw.Icons.Style != "" {
+			tabs.Icons.Style = raw.Icons.Style
+		}
+		if raw.Icons.Fallback != nil {
+			tabs.Icons.Fallback = *raw.Icons.Fallback
+		}
+		if raw.Icons.Map != nil {
+			tabs.Icons.Map = raw.Icons.Map
+		}
+	}
+	return tabs, nil
 }

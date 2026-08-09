@@ -3,10 +3,10 @@
 # and the asset name composed in that script must stay in sync.
 version: 2
 
-project_name: herdr-window-title
+project_name: herdr-titles
 
 builds:
-  - binary: herdr-window-title
+  - binary: herdr-titles
     main: .
     env:
       - CGO_ENABLED=0

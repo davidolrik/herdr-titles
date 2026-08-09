@@ -61,10 +61,10 @@ func TestFetchScriptPrintAsset(t *testing.T) {
 	dir := scriptDir(t)
 	v := manifestVersion(t)
 	cases := []struct{ unameS, unameM, want string }{
-		{"Darwin", "arm64", "herdr-window-title_" + v + "_darwin_arm64"},
-		{"Darwin", "x86_64", "herdr-window-title_" + v + "_darwin_amd64"},
-		{"Linux", "aarch64", "herdr-window-title_" + v + "_linux_arm64"},
-		{"Linux", "x86_64", "herdr-window-title_" + v + "_linux_amd64"},
+		{"Darwin", "arm64", "herdr-titles_" + v + "_darwin_arm64"},
+		{"Darwin", "x86_64", "herdr-titles_" + v + "_darwin_amd64"},
+		{"Linux", "aarch64", "herdr-titles_" + v + "_linux_arm64"},
+		{"Linux", "x86_64", "herdr-titles_" + v + "_linux_amd64"},
 	}
 	for _, tc := range cases {
 		out, err := runScript(t, dir,
@@ -105,7 +105,7 @@ func TestFetchScriptDownloadsPrebuilt(t *testing.T) {
 	dir := scriptDir(t)
 	v := manifestVersion(t)
 	payload := []byte("#!/bin/sh\necho fake-prebuilt\n")
-	base := fakeRelease(t, v, "herdr-window-title_"+v+"_darwin_arm64", payload)
+	base := fakeRelease(t, v, "herdr-titles_"+v+"_darwin_arm64", payload)
 
 	out, err := runScript(t, dir, []string{
 		"HWT_UNAME_S=Darwin", "HWT_UNAME_M=arm64", "HWT_BASE_URL=file://" + base,
@@ -113,14 +113,14 @@ func TestFetchScriptDownloadsPrebuilt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("script: %v\n%s", err, out)
 	}
-	got, err := os.ReadFile(filepath.Join(dir, "bin", "herdr-window-title"))
+	got, err := os.ReadFile(filepath.Join(dir, "bin", "herdr-titles"))
 	if err != nil {
 		t.Fatalf("installed binary: %v", err)
 	}
 	if string(got) != string(payload) {
 		t.Error("installed binary does not match release asset")
 	}
-	info, err := os.Stat(filepath.Join(dir, "bin", "herdr-window-title"))
+	info, err := os.Stat(filepath.Join(dir, "bin", "herdr-titles"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestFetchScriptDownloadsPrebuilt(t *testing.T) {
 func TestFetchScriptChecksumMismatchFailsHard(t *testing.T) {
 	dir := scriptDir(t)
 	v := manifestVersion(t)
-	asset := "herdr-window-title_" + v + "_darwin_arm64"
+	asset := "herdr-titles_" + v + "_darwin_arm64"
 	base := fakeRelease(t, v, asset, []byte("real payload"))
 	// Corrupt the asset after the checksum was computed.
 	if err := os.WriteFile(filepath.Join(base, "v"+v, asset), []byte("tampered"), 0o644); err != nil {
@@ -148,7 +148,7 @@ func TestFetchScriptChecksumMismatchFailsHard(t *testing.T) {
 	if !strings.Contains(out, "checksum") {
 		t.Errorf("failure output %q does not mention checksum", out)
 	}
-	if _, statErr := os.Stat(filepath.Join(dir, "bin", "herdr-window-title")); statErr == nil {
+	if _, statErr := os.Stat(filepath.Join(dir, "bin", "herdr-titles")); statErr == nil {
 		t.Error("binary was installed despite checksum mismatch")
 	}
 }
@@ -164,7 +164,7 @@ func TestFetchScriptFallsBackToGoBuild(t *testing.T) {
 	if !strings.Contains(out, "building from source") {
 		t.Errorf("output %q does not mention source build", out)
 	}
-	if _, err := os.Stat("bin/herdr-window-title"); err != nil {
+	if _, err := os.Stat("bin/herdr-titles"); err != nil {
 		t.Fatalf("binary missing after fallback build: %v", err)
 	}
 }

@@ -1,6 +1,6 @@
-id = "davidolrik.window-title"
-name = "Herdr Window Title"
-version = "0.1.0"
+id = "davidolrik.titles"
+name = "Herdr Titles"
+version = "0.2.0"
 # [[startup]] delivery requires herdr 0.7.5; everything else works on 0.7.1.
 min_herdr_version = "0.7.5"
 description = "Set the terminal window title from an HCL template fed with herdr state (focused space, focused tab, agent attention counts) and the user's shell environment."
@@ -18,58 +18,85 @@ platforms = ["linux", "macos"]
 # The event name is argv[1] for logging; it does not alter behavior, except
 # "refresh" which bypasses the shell-environment cache.
 [[startup]]
-command = ["./bin/herdr-window-title", "startup"]
+command = ["./bin/herdr-titles", "startup"]
 
 # Focused space or its label changed.
 [[events]]
 on = "workspace.focused"
-command = ["./bin/herdr-window-title", "workspace.focused"]
+command = ["./bin/herdr-titles", "workspace.focused"]
 
 [[events]]
 on = "workspace.renamed"
-command = ["./bin/herdr-window-title", "workspace.renamed"]
+command = ["./bin/herdr-titles", "workspace.renamed"]
 
 # Focused tab or its label changed.
 [[events]]
 on = "tab.focused"
-command = ["./bin/herdr-window-title", "tab.focused"]
+command = ["./bin/herdr-titles", "tab.focused"]
 
 [[events]]
 on = "tab.renamed"
-command = ["./bin/herdr-window-title", "tab.renamed"]
+command = ["./bin/herdr-titles", "tab.renamed"]
+
+# Tab naming: new tabs need a name; renames detect manual opt-outs; a split
+# or closed pane flips a tab between nameable and un-nameable; focus changes
+# which pane names a multi-pane tab.
+[[events]]
+on = "tab.created"
+command = ["./bin/herdr-titles", "tab.created"]
+
+[[events]]
+on = "pane.created"
+command = ["./bin/herdr-titles", "pane.created"]
+
+[[events]]
+on = "pane.moved"
+command = ["./bin/herdr-titles", "pane.moved"]
+
+[[events]]
+on = "pane.focused"
+command = ["./bin/herdr-titles", "pane.focused"]
 
 # Agent attention counts changed. pane.closed/pane.exited cover an agent
 # disappearing; there is no dedicated agent-removed event.
 [[events]]
 on = "pane.agent_detected"
-command = ["./bin/herdr-window-title", "pane.agent_detected"]
+command = ["./bin/herdr-titles", "pane.agent_detected"]
 
 [[events]]
 on = "pane.agent_status_changed"
-command = ["./bin/herdr-window-title", "pane.agent_status_changed"]
+command = ["./bin/herdr-titles", "pane.agent_status_changed"]
 
 [[events]]
 on = "pane.closed"
-command = ["./bin/herdr-window-title", "pane.closed"]
+command = ["./bin/herdr-titles", "pane.closed"]
 
 [[events]]
 on = "pane.exited"
-command = ["./bin/herdr-window-title", "pane.exited"]
+command = ["./bin/herdr-titles", "pane.exited"]
 
 # Re-render on demand with a fresh shell environment — for external changes
 # herdr cannot see, e.g. an Overseer context/location switch:
-#   herdr plugin action invoke davidolrik.window-title.refresh
+#   herdr plugin action invoke davidolrik.titles.refresh
 [[actions]]
 id = "refresh"
 title = "Window title: refresh now"
 contexts = ["global"]
-command = ["./bin/herdr-window-title", "refresh"]
+command = ["./bin/herdr-titles", "refresh"]
+
+# Re-adopt the invoking tab into automatic naming after a manual rename:
+#   herdr plugin action invoke davidolrik.titles.reset
+[[actions]]
+id = "reset"
+title = "Tab naming: reset tab to automatic naming"
+contexts = ["global"]
+command = ["./bin/herdr-titles", "reset"]
 
 # Write the fully-documented default config into the plugin's config dir
 # (never overwrites an existing config.hcl):
-#   herdr plugin action invoke davidolrik.window-title.init-config
+#   herdr plugin action invoke davidolrik.titles.init-config
 [[actions]]
 id = "init-config"
 title = "Window title: create default config file"
 contexts = ["global"]
-command = ["./bin/herdr-window-title", "init"]
+command = ["./bin/herdr-titles", "init"]

@@ -11,19 +11,40 @@ import (
 
 const herdrTimeout = 10 * time.Second
 
-// Agent is the slice of a herdr agent the title cares about.
+// Agent is the slice of a herdr agent the plugin cares about.
 type Agent struct {
 	Status      string
 	WorkspaceID string
+	PaneID      string
+	Kind        string // herdr's detected agent kind, e.g. "claude"
+	Title       string // terminal_title_stripped: the agent's session title
 }
 
-// Snapshot is the slice of `herdr api snapshot` the title cares about.
+// Tab is the slice of a herdr tab the plugin cares about.
+type Tab struct {
+	TabID       string
+	WorkspaceID string
+	Label       string
+	PaneCount   int
+	Focused     bool
+}
+
+// Pane is the slice of a herdr pane the plugin cares about.
+type Pane struct {
+	PaneID  string
+	TabID   string
+	Focused bool
+}
+
+// Snapshot is the slice of `herdr api snapshot` the plugin cares about.
 type Snapshot struct {
 	FocusedWorkspaceID string
 	FocusedTabID       string
 	SpaceLabel         string
 	TabLabel           string
 	Agents             []Agent
+	Tabs               []Tab
+	Panes              []Pane
 }
 
 func decodeSnapshot(data []byte) (*Snapshot, error) {
@@ -37,12 +58,23 @@ func decodeSnapshot(data []byte) (*Snapshot, error) {
 					Label       string `json:"label"`
 				} `json:"workspaces"`
 				Tabs []struct {
-					TabID string `json:"tab_id"`
-					Label string `json:"label"`
-				} `json:"tabs"`
-				Agents []struct {
-					AgentStatus string `json:"agent_status"`
+					TabID       string `json:"tab_id"`
 					WorkspaceID string `json:"workspace_id"`
+					Label       string `json:"label"`
+					PaneCount   int    `json:"pane_count"`
+					Focused     bool   `json:"focused"`
+				} `json:"tabs"`
+				Panes []struct {
+					PaneID  string `json:"pane_id"`
+					TabID   string `json:"tab_id"`
+					Focused bool   `json:"focused"`
+				} `json:"panes"`
+				Agents []struct {
+					AgentStatus   string `json:"agent_status"`
+					WorkspaceID   string `json:"workspace_id"`
+					PaneID        string `json:"pane_id"`
+					Agent         string `json:"agent"`
+					TitleStripped string `json:"terminal_title_stripped"`
 				} `json:"agents"`
 			} `json:"snapshot"`
 		} `json:"result"`
@@ -68,9 +100,19 @@ func decodeSnapshot(data []byte) (*Snapshot, error) {
 		if t.TabID == raw.FocusedTabID {
 			snap.TabLabel = t.Label
 		}
+		snap.Tabs = append(snap.Tabs, Tab{
+			TabID: t.TabID, WorkspaceID: t.WorkspaceID, Label: t.Label,
+			PaneCount: t.PaneCount, Focused: t.Focused,
+		})
+	}
+	for _, p := range raw.Panes {
+		snap.Panes = append(snap.Panes, Pane{PaneID: p.PaneID, TabID: p.TabID, Focused: p.Focused})
 	}
 	for _, a := range raw.Agents {
-		snap.Agents = append(snap.Agents, Agent{Status: a.AgentStatus, WorkspaceID: a.WorkspaceID})
+		snap.Agents = append(snap.Agents, Agent{
+			Status: a.AgentStatus, WorkspaceID: a.WorkspaceID,
+			PaneID: a.PaneID, Kind: a.Agent, Title: a.TitleStripped,
+		})
 	}
 	return snap, nil
 }

@@ -1,4 +1,4 @@
-module github.com/davidolrik/herdr-window-title
+module github.com/davidolrik/herdr-titles
 
 go 1.26.5
 

@@ -1,5 +1,5 @@
 #!/bin/sh
-# fetch-or-build.sh — the herdr [[build]] step: produce bin/herdr-window-title.
+# fetch-or-build.sh — the herdr [[build]] step: produce bin/herdr-titles.
 #
 # Downloads the prebuilt release binary matching this checkout's manifest
 # version and the current platform, verifying its sha256 against the release
@@ -12,7 +12,7 @@
 # Overrides for tests: HWT_UNAME_S, HWT_UNAME_M, HWT_BASE_URL.
 set -eu
 
-BASE_URL="${HWT_BASE_URL:-https://github.com/davidolrik/herdr-window-title/releases/download}"
+BASE_URL="${HWT_BASE_URL:-https://github.com/davidolrik/herdr-titles/releases/download}"
 UNAME_S="${HWT_UNAME_S:-$(uname -s)}"
 UNAME_M="${HWT_UNAME_M:-$(uname -m)}"
 
@@ -33,7 +33,7 @@ case "$UNAME_M" in
   *)             arch="" ;;
 esac
 
-asset="herdr-window-title_${version}_${os}_${arch}"
+asset="herdr-titles_${version}_${os}_${arch}"
 
 if [ "${1:-}" = "--print-asset" ]; then
   if [ -z "$os" ] || [ -z "$arch" ]; then
@@ -48,7 +48,7 @@ build_from_source() {
   echo "fetch-or-build: $1" >&2
   if command -v go >/dev/null 2>&1; then
     echo "fetch-or-build: building from source with go" >&2
-    exec go build -o bin/herdr-window-title .
+    exec go build -o bin/herdr-titles .
   fi
   echo "fetch-or-build: no prebuilt binary and go is not installed" >&2
   echo "fetch-or-build: install Go (https://go.dev/dl/) or retry with network access" >&2
@@ -88,6 +88,6 @@ if [ "$actual" != "$expected" ]; then
 fi
 
 mkdir -p bin
-mv "$tmp/$asset" bin/herdr-window-title
-chmod +x bin/herdr-window-title
+mv "$tmp/$asset" bin/herdr-titles
+chmod +x bin/herdr-titles
 echo "fetch-or-build: installed prebuilt $asset" >&2

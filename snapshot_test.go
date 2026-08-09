@@ -31,9 +31,29 @@ func TestDecodeSnapshotFixture(t *testing.T) {
 		if a.Status == "working" {
 			working++
 		}
+		if a.PaneID == "" || a.Kind == "" {
+			t.Errorf("agent missing pane/kind: %+v", a)
+		}
 	}
 	if working != 1 {
 		t.Errorf("working agents = %d, want 1", working)
+	}
+	if len(snap.Tabs) == 0 || len(snap.Panes) == 0 {
+		t.Fatalf("tabs/panes not decoded: %d tabs, %d panes", len(snap.Tabs), len(snap.Panes))
+	}
+	for _, tab := range snap.Tabs {
+		if tab.TabID == "" || tab.PaneCount == 0 {
+			t.Errorf("tab missing fields: %+v", tab)
+		}
+	}
+	titled := 0
+	for _, a := range snap.Agents {
+		if a.Title != "" {
+			titled++
+		}
+	}
+	if titled == 0 {
+		t.Error("no agent carried a session title")
 	}
 }
 

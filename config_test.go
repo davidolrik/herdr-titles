@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -85,9 +86,13 @@ func TestLoadConfigMissingFileUsesDefaults(t *testing.T) {
 	if cfg.Scope != "all" {
 		t.Errorf("default Scope = %q, want all", cfg.Scope)
 	}
-	for _, s := range want {
-		if cfg.Icons[s] == "" {
-			t.Errorf("default Icons[%q] is empty", s)
+	// All herdr states carry an icon so enabling one is a statuses-only edit.
+	wantIcons := map[string]string{
+		"idle": "○", "working": "◐", "blocked": "×", "done": "✓", "unknown": "·",
+	}
+	for s, icon := range wantIcons {
+		if cfg.Icons[s] != icon {
+			t.Errorf("default Icons[%q] = %q, want %q", s, cfg.Icons[s], icon)
 		}
 	}
 }
@@ -168,6 +173,12 @@ func TestWriteDefaultConfig(t *testing.T) {
 	if cfg.Scope != "all" || cfg.Icons["blocked"] != "×" {
 		t.Errorf("generated config parsed unexpectedly: scope=%q icons=%v", cfg.Scope, cfg.Icons)
 	}
+	if len(cfg.Icons) != 5 || cfg.Icons["working"] != "◐" || cfg.Icons["idle"] != "○" {
+		t.Errorf("generated config icons = %v, want all five herdr state icons", cfg.Icons)
+	}
+	if got := len(cfg.Statuses); got != 3 {
+		t.Errorf("generated config enables %d statuses, want 3", got)
+	}
 
 	// A second run must refuse to overwrite.
 	if _, err := WriteDefaultConfig(dir); err == nil {
@@ -204,5 +215,25 @@ func TestGeneratedConfigTemplateMatchesBuiltInDefault(t *testing.T) {
 	}
 	if a != b {
 		t.Errorf("generated config renders %q, built-in default renders %q", a, b)
+	}
+}
+
+func TestExampleConfigTabsMatchBuiltInDefaults(t *testing.T) {
+	t.Setenv("SHELL", "/bin/zsh")
+	dir := t.TempDir()
+	path, err := WriteDefaultConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generated, err := LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	builtin, err := LoadConfig(filepath.Join(dir, "missing.hcl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(generated.Tabs, builtin.Tabs) {
+		t.Errorf("example config tabs drift from built-in defaults:\nexample: %+v\nbuiltin: %+v", generated.Tabs, builtin.Tabs)
 	}
 }
