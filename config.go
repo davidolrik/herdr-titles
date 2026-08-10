@@ -43,11 +43,11 @@ func WriteDefaultConfig(configDir string) (string, error) {
 
 // defaultConfigHCL is used when no config file exists, and its pieces fill in
 // anything a user config omits. The template mirrors the pre-plugin title
-// ("<name> : <Context> @ <Location>") and appends the herdr space, tab, and
+// ("<name> : <Context> @ <Location>") and appends the herdr workspace, tab, and
 // attention summary. getenv() is used instead of env.* so the template still
 // renders when Overseer is absent.
 const defaultConfigHCL = `
-template = "${coalesce(file("~/.local/var/herdr_window_title.${session}"), session)}${getenv("OVERSEER_CONTEXT_DISPLAY_NAME") != "" ? " : ${getenv("OVERSEER_CONTEXT_DISPLAY_NAME")}${getenv("OVERSEER_LOCATION_DISPLAY_NAME") != "" ? " @ ${getenv("OVERSEER_LOCATION_DISPLAY_NAME")}" : ""}" : ""} › ${pad_icons(space)} › ${pad_icons(tab)}${attention != "" ? " › ${attention}" : ""}"
+template = "${coalesce(file("~/.local/var/herdr_window_title.${session}"), session)}${getenv("OVERSEER_CONTEXT_DISPLAY_NAME") != "" ? " : ${getenv("OVERSEER_CONTEXT_DISPLAY_NAME")}${getenv("OVERSEER_LOCATION_DISPLAY_NAME") != "" ? " @ ${getenv("OVERSEER_LOCATION_DISPLAY_NAME")}" : ""}" : ""} › ${pad_icons(workspace)} › ${pad_icons(tab)}${attention != "" ? " › ${attention}" : ""}"
 
 env {
   ttl = "10s"
@@ -75,7 +75,7 @@ type Config struct {
 	EnvCommand []string
 	EnvTTL     time.Duration
 	Statuses   []string
-	Scope      string // "all" or "focused-space"
+	Scope      string // "all" or "focused-workspace"
 	Icons      map[string]string
 	Tabs       *TabsConfig
 }
@@ -201,8 +201,8 @@ func LoadConfig(path string) (*Config, error) {
 			cfg.Icons = raw.Attention.Icons
 		}
 	}
-	if cfg.Scope != "all" && cfg.Scope != "focused-space" {
-		return nil, fmt.Errorf(`%s: attention.scope must be "all" or "focused-space", got %q`, path, cfg.Scope)
+	if cfg.Scope != "all" && cfg.Scope != "focused-workspace" {
+		return nil, fmt.Errorf(`%s: attention.scope must be "all" or "focused-workspace", got %q`, path, cfg.Scope)
 	}
 
 	cfg.Tabs, err = resolveTabs(raw.Tabs, path, shell)

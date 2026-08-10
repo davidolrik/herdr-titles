@@ -17,8 +17,8 @@ func TestDecodeSnapshotFixture(t *testing.T) {
 	if snap.FocusedWorkspaceID != "wE" {
 		t.Errorf("FocusedWorkspaceID = %q, want wE", snap.FocusedWorkspaceID)
 	}
-	if snap.SpaceLabel != "herdr-overseer" {
-		t.Errorf("SpaceLabel = %q, want herdr-overseer", snap.SpaceLabel)
+	if snap.WorkspaceLabel != "herdr-overseer" {
+		t.Errorf("WorkspaceLabel = %q, want herdr-overseer", snap.WorkspaceLabel)
 	}
 	if snap.TabLabel != "1" {
 		t.Errorf("TabLabel = %q, want 1", snap.TabLabel)

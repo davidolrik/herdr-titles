@@ -58,7 +58,7 @@ func TestRenderAttentionEmpty(t *testing.T) {
 }
 
 func TestRenderAttentionFocusedSpaceScope(t *testing.T) {
-	cfg := attentionConfig(t, "focused-space")
+	cfg := attentionConfig(t, "focused-workspace")
 	agents := []Agent{
 		{Status: "blocked", WorkspaceID: "w1"},
 		{Status: "blocked", WorkspaceID: "w2"},
@@ -130,7 +130,7 @@ attention {
 func composeSnap() *Snapshot {
 	return &Snapshot{
 		FocusedWorkspaceID: "w1",
-		SpaceLabel:         "myspace",
+		WorkspaceLabel:     "myspace",
 		TabLabel:           "mytab",
 		Agents: []Agent{
 			{Status: "blocked", WorkspaceID: "w1"},
@@ -141,7 +141,7 @@ func composeSnap() *Snapshot {
 
 func TestComposeTitleVariables(t *testing.T) {
 	cfg := testConfig(t, `
-template = "${session}/${space}/${tab}/${attention}/${counts.working}"
+template = "${session}/${workspace}/${tab}/${attention}/${counts.working}"
 attention { icons = { blocked = "B" } }
 `)
 	got, err := ComposeTitle(cfg, composeSnap(), "mysession", map[string]string{})

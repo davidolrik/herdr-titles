@@ -90,7 +90,7 @@ func TestEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := `
-template = "${session}|${space}|${tab}|${attention}|${getenv("E2E_MARKER")}"
+template = "${session}|${workspace}|${tab}|${attention}|${getenv("E2E_MARKER")}"
 
 env {
   command = ["/bin/sh", "-c", "printf 'E2E_MARKER=live\\0'"]

@@ -10,7 +10,7 @@
 # The window title as an HCL template expression.
 #
 # Variables:
-#   space      focused workspace label
+#   workspace  focused workspace label
 #   tab        focused tab label
 #   session    herdr session name ($HERDR_SESSION, "default" outside herdr)
 #   attention  pre-rendered summary like "×2 ✓1" ("" when nothing needs attention)
@@ -25,11 +25,11 @@
 #   format(fmt, …)     printf-style formatting
 #   pad_icons(text)    add a space after nerd-font (private-use) glyphs, which
 #                      otherwise smush into the next character in the title
-#                      bar's system font (used on space/tab in the default)
+#                      bar's system font (used on workspace/tab in the default)
 #
 # Note: HCL has no "+" string concatenation — build strings with nested
 # interpolation instead: "prefix ${getenv("VAR")} suffix".
-template = "${coalesce(file("~/.local/var/herdr_window_title.${session}"), session)}${getenv("OVERSEER_CONTEXT_DISPLAY_NAME") != "" ? " : ${getenv("OVERSEER_CONTEXT_DISPLAY_NAME")}${getenv("OVERSEER_LOCATION_DISPLAY_NAME") != "" ? " @ ${getenv("OVERSEER_LOCATION_DISPLAY_NAME")}" : ""}" : ""} › ${pad_icons(space)} › ${pad_icons(tab)}${attention != "" ? " › ${attention}" : ""}"
+template = "${coalesce(file("~/.local/var/herdr_window_title.${session}"), session)}${getenv("OVERSEER_CONTEXT_DISPLAY_NAME") != "" ? " : ${getenv("OVERSEER_CONTEXT_DISPLAY_NAME")}${getenv("OVERSEER_LOCATION_DISPLAY_NAME") != "" ? " @ ${getenv("OVERSEER_LOCATION_DISPLAY_NAME")}" : ""}" : ""} › ${pad_icons(workspace)} › ${pad_icons(tab)}${attention != "" ? " › ${attention}" : ""}"
 
 env {
   # Command that prints the environment as NUL-separated KEY=VALUE pairs.
@@ -121,7 +121,7 @@ attention {
   # All states: idle, working, blocked, done, unknown.
   statuses = ["blocked", "done", "unknown"]
 
-  # "all" counts agents in every space; "focused-space" only the current one.
+  # "all" counts agents in every workspace; "focused-workspace" only the current one.
   scope = "all"
 
   # Icon per status, rendered as "<icon><count>" (e.g. "×2"). A status

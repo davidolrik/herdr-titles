@@ -20,7 +20,7 @@ func writeConfig(t *testing.T, content string) string {
 
 func TestLoadConfigFull(t *testing.T) {
 	path := writeConfig(t, `
-template = "${space} - ${tab}"
+template = "${workspace} - ${tab}"
 
 env {
   command = ["/bin/sh", "-c", "printf 'A=b\\0'"]
@@ -29,7 +29,7 @@ env {
 
 attention {
   statuses = ["blocked"]
-  scope    = "focused-space"
+  scope    = "focused-workspace"
   icons = {
     blocked = "!"
   }
@@ -51,8 +51,8 @@ attention {
 	if len(cfg.Statuses) != 1 || cfg.Statuses[0] != "blocked" {
 		t.Errorf("Statuses = %v, want [blocked]", cfg.Statuses)
 	}
-	if cfg.Scope != "focused-space" {
-		t.Errorf("Scope = %q, want focused-space", cfg.Scope)
+	if cfg.Scope != "focused-workspace" {
+		t.Errorf("Scope = %q, want focused-workspace", cfg.Scope)
 	}
 	if cfg.Icons["blocked"] != "!" {
 		t.Errorf("Icons[blocked] = %q, want !", cfg.Icons["blocked"])
@@ -98,7 +98,7 @@ func TestLoadConfigMissingFileUsesDefaults(t *testing.T) {
 }
 
 func TestLoadConfigPartialKeepsOtherDefaults(t *testing.T) {
-	path := writeConfig(t, `template = "${space}"`)
+	path := writeConfig(t, `template = "${workspace}"`)
 	cfg, err := LoadConfig(path)
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
@@ -202,7 +202,7 @@ func TestGeneratedConfigTemplateMatchesBuiltInDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap := &Snapshot{FocusedWorkspaceID: "w1", SpaceLabel: "sp", TabLabel: "tb",
+	snap := &Snapshot{FocusedWorkspaceID: "w1", WorkspaceLabel: "sp", TabLabel: "tb",
 		Agents: []Agent{{Status: "blocked", WorkspaceID: "w1"}}}
 	env := map[string]string{"OVERSEER_CONTEXT_DISPLAY_NAME": "Ctx", "OVERSEER_LOCATION_DISPLAY_NAME": "Loc"}
 	a, err := ComposeTitle(generated, snap, "s", env)

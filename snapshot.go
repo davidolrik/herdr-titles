@@ -40,7 +40,7 @@ type Pane struct {
 type Snapshot struct {
 	FocusedWorkspaceID string
 	FocusedTabID       string
-	SpaceLabel         string
+	WorkspaceLabel     string
 	TabLabel           string
 	Agents             []Agent
 	Tabs               []Tab
@@ -93,7 +93,7 @@ func decodeSnapshot(data []byte) (*Snapshot, error) {
 	}
 	for _, w := range raw.Workspaces {
 		if w.WorkspaceID == raw.FocusedWorkspaceID {
-			snap.SpaceLabel = w.Label
+			snap.WorkspaceLabel = w.Label
 		}
 	}
 	for _, t := range raw.Tabs {

@@ -25,7 +25,7 @@ func scopedCounts(agents []Agent, cfg *Config, focusedWorkspaceID string) map[st
 		counts[s] = 0
 	}
 	for _, a := range agents {
-		if cfg.Scope == "focused-space" && a.WorkspaceID != focusedWorkspaceID {
+		if cfg.Scope == "focused-workspace" && a.WorkspaceID != focusedWorkspaceID {
 			continue
 		}
 		counts[a.Status]++
@@ -132,7 +132,7 @@ func ComposeTitle(cfg *Config, snap *Snapshot, session string, env map[string]st
 
 	ctx := &hcl.EvalContext{
 		Variables: map[string]cty.Value{
-			"space":     cty.StringVal(snap.SpaceLabel),
+			"workspace": cty.StringVal(snap.WorkspaceLabel),
 			"tab":       cty.StringVal(snap.TabLabel),
 			"session":   cty.StringVal(session),
 			"attention": cty.StringVal(RenderAttention(snap.Agents, cfg, snap.FocusedWorkspaceID)),

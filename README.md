@@ -5,12 +5,12 @@ HCL template, combining live herdr state with the user's shell environment:
 
 ```text
 mysession : Work @ HQ › myproject › 1 › ×2 ✓1
-└─ base name ┘ └ env ─┘  └ space ┘ └tab┘ └ attn ┘
+└─ base name ┘ └ env ─┘ └workspace┘ └tab┘ └ attn ┘
 ```
 
-- **space / tab** — the currently focused herdr workspace and tab labels.
+- **workspace / tab** — the currently focused herdr workspace and tab labels.
 - **attention** — how many agents need you, with a status icon per state
-  (`blocked`, `done`, `unknown` by default), counted across all spaces.
+  (`blocked`, `done`, `unknown` by default), counted across all workspaces.
 - **tab naming** — tabs are automatically named after their foreground
   program (with optional Nerd Font icons), or after a hosted agent's session
   title; a manual rename opts that tab out. Ported from
@@ -58,7 +58,7 @@ It never overwrites an existing config.hcl.)
 
 Every setting is optional; the generated file documents the template variables,
 functions, and defaults. Without a config file the default template mirrors
-`"<name> : <Context> @ <Location>"` (the pre-plugin title) and appends space,
+`"<name> : <Context> @ <Location>"` (the pre-plugin title) and appends workspace,
 tab, and attention.
 
 ## Shell hook: real-time tab names
@@ -106,7 +106,7 @@ example, with [Overseer](https://overseer.olrik.dev/) exporting
 `OVERSEER_CONTEXT_DISPLAY_NAME` (its location variable works the same way):
 
 ```hcl
-template = "${session} : ${getenv("OVERSEER_CONTEXT_DISPLAY_NAME")} › ${space} › ${tab}"
+template = "${session} : ${getenv("OVERSEER_CONTEXT_DISPLAY_NAME")} › ${workspace} › ${tab}"
 ```
 
 Use `getenv("VAR")` rather than `env.VAR` when the variable might be absent —
