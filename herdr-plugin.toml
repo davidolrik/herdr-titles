@@ -1,6 +1,6 @@
 id = "davidolrik.titles"
 name = "Herdr Titles"
-version = "0.3.0"
+version = "0.4.0"
 # [[startup]] delivery requires herdr 0.7.5; everything else works on 0.7.1.
 min_herdr_version = "0.7.5"
 description = "Set the terminal window title from an HCL template fed with herdr state (focused space, focused tab, agent attention counts) and the user's shell environment."
@@ -83,6 +83,16 @@ id = "refresh"
 title = "Window title: refresh now"
 contexts = ["global"]
 command = ["./bin/herdr-titles", "refresh"]
+
+# Refresh every running herdr session's titles with a fresh environment —
+# for hooks of external tools (Overseer context changes etc.), where the
+# herdr CLI can only reach one session:
+#   ./bin/herdr-titles refresh-all
+[[actions]]
+id = "refresh-all"
+title = "Titles: refresh every session"
+contexts = ["global"]
+command = ["./bin/herdr-titles", "refresh-all"]
 
 # Re-adopt the invoking tab into automatic naming after a manual rename:
 #   herdr plugin action invoke davidolrik.titles.reset

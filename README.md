@@ -122,23 +122,23 @@ herdr plugin action invoke davidolrik.titles.refresh
 ```
 
 From a daemon context (like Overseer's hooks) the `herdr` CLI can only reach
-one session, so talk to every session socket directly — the request is
-newline-delimited JSON over a unix socket, and stopped sessions' leftover
-sockets simply refuse the connect:
+one session — use the plugin's `refresh-all` subcommand instead, which talks
+to every running session's socket directly (no dependencies beyond the
+plugin binary itself):
 
 ```sh
 #!/bin/sh
-payload='{"id":"refresh","method":"plugin.action.invoke","params":{"plugin_id":"davidolrik.titles","action_id":"refresh"}}'
-for sock in ~/.config/herdr/sessions/*/herdr.sock ~/.config/herdr/herdr.sock; do
-  [ -S "$sock" ] || continue
-  printf '%s\n' "$payload" | socat -t5 - UNIX-CONNECT:"$sock" >/dev/null 2>&1
+# Resolve the installed plugin binary and refresh every herdr session.
+for bin in "$HOME"/.config/herdr/plugins/github/davidolrik.titles-*/bin/herdr-titles; do
+  [ -x "$bin" ] && exec "$bin" refresh-all
 done
 exit 0
 ```
 
 Wire that script into the tool's on-change hook (for Overseer:
 `context_hooks`/`location_hooks` in its config), and a context switch shows
-up in every window title immediately.
+up in every window title immediately. Stopped sessions' leftover sockets are
+skipped silently.
 
 ## Develop
 

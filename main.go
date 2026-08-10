@@ -250,6 +250,8 @@ func main() {
 	switch event {
 	case "init":
 		err = runInit()
+	case "refresh-all":
+		err = runRefreshAll()
 	case "preexec", "precmd":
 		err = runFast(event, os.Args[2:])
 	default:
