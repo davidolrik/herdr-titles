@@ -14,17 +14,20 @@ import (
 	"syscall"
 )
 
-// withLock runs fn under the state-dir lock. A contender touches the rerun
-// flag and returns nil without running fn. The holder re-runs fn while the
-// flag keeps appearing, capped at 8 passes.
-func withLock(stateDir string, fn func() error) error {
-	lockFile, err := os.OpenFile(filepath.Join(stateDir, "lock"), os.O_CREATE|os.O_RDWR, 0o600)
+// withLock runs fn under the PER-SESSION lock: every pass is scoped to one
+// herdr session by its environment, so a contender from another session must
+// never hand its work to this session's holder — its rerun pass would
+// reconcile the wrong session's tabs and titles. Within a session, a
+// contender touches the rerun flag and returns nil without running fn; the
+// holder re-runs fn while the flag keeps appearing, capped at 8 passes.
+func withLock(stateDir, session string, fn func() error) error {
+	lockFile, err := os.OpenFile(filepath.Join(stateDir, "lock."+session), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
 	}
 	defer lockFile.Close()
 
-	rerun := filepath.Join(stateDir, "rerun")
+	rerun := filepath.Join(stateDir, "rerun."+session)
 	if err := syscall.Flock(int(lockFile.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		// Someone else is reconciling; hand them the work.
 		return os.WriteFile(rerun, nil, 0o600)

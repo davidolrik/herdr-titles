@@ -1,6 +1,6 @@
 id = "davidolrik.titles"
 name = "Herdr Titles"
-version = "0.2.0"
+version = "0.2.1"
 # [[startup]] delivery requires herdr 0.7.5; everything else works on 0.7.1.
 min_herdr_version = "0.7.5"
 description = "Set the terminal window title from an HCL template fed with herdr state (focused space, focused tab, agent attention counts) and the user's shell environment."

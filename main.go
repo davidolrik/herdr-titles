@@ -51,7 +51,8 @@ func run(event string) error {
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return err
 	}
-	return withLock(stateDir, func() error { return fullPass(event) })
+	session := envOr("HERDR_SESSION", "default")
+	return withLock(stateDir, session, func() error { return fullPass(event) })
 }
 
 // fullPass is one idempotent reconcile: tabs, then the window title. The
@@ -193,7 +194,7 @@ func runFast(mode string, args []string) error {
 	// raised meanwhile escalates to a full reconcile, which is a superset —
 	// a structural event that raced this hook still gets handled.
 	first := true
-	return withLock(stateDir, func() error {
+	return withLock(stateDir, envOr("HERDR_SESSION", "default"), func() error {
 		if !first {
 			return fullPass("rerun")
 		}
