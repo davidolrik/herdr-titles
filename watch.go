@@ -131,8 +131,10 @@ func classifyEvent(line []byte, lastTitles map[string]string) *trigger {
 // runScheduler drains triggers into debounced, scoped work. A full pass
 // absorbs all pending cheap work; full passes additionally respect a rate
 // floor so no event storm can exceed a known cost ceiling. Returns when the
-// triggers channel closes.
-func runScheduler(triggers <-chan trigger, ops watchOps, timings watchTimings) {
+// triggers channel closes or stop is closed — the daemon uses stop, because
+// closing a channel that statWatcher/binaryWatcher may still send into is a
+// race (and a panic under unlucky timing).
+func runScheduler(triggers <-chan trigger, ops watchOps, timings watchTimings, stop <-chan struct{}) {
 	var (
 		pendingFull, pendingTitle, pendingBypass bool
 		renames                                  = map[string]paneEvent{}
@@ -185,6 +187,8 @@ func runScheduler(triggers <-chan trigger, ops watchOps, timings watchTimings) {
 
 	for {
 		select {
+		case <-stop:
+			return
 		case tr, ok := <-triggers:
 			if !ok {
 				return
@@ -250,19 +254,27 @@ type binaryIdentity struct {
 	size    int64
 }
 
-// binaryWatcher polls the daemon's own executable and hands the process over
-// to a replaced binary. A single stat error is tolerated (installs replace
-// the checkout with a brief rename gap); two consecutive misses mean the
-// plugin is gone and the handoff doubles as an orderly exit.
-func binaryWatcher(exePath string, interval time.Duration, stop <-chan struct{}) {
+// fingerprintBinary stats the executable for change detection; nil when it
+// cannot be fingerprinted right now.
+func fingerprintBinary(exePath string) *binaryIdentity {
 	info, err := os.Stat(exePath)
 	if os.Getenv("HWT_DEBUG") != "" {
-		fmt.Fprintf(os.Stderr, "DEBUG binaryWatcher exe=%q statErr=%v interval=%v\n", exePath, err, interval)
+		fmt.Fprintf(os.Stderr, "DEBUG fingerprint exe=%q statErr=%v\n", exePath, err)
 	}
 	if err != nil {
-		return // can't fingerprint; skip self-restart for this run
+		return nil
 	}
-	baseline := binaryIdentity{info.ModTime(), info.Size()}
+	return &binaryIdentity{info.ModTime(), info.Size()}
+}
+
+// binaryWatcher polls the daemon's own executable and hands the process over
+// to a replaced binary. The baseline is captured by the CALLER before the
+// event subscription, so a replacement that lands at any point after startup
+// is always detected. A single stat error is tolerated (installs replace the
+// checkout with a brief rename gap); two consecutive misses mean the plugin
+// is gone and the handoff doubles as an orderly exit. A nil baseline (binary
+// unreadable at startup) is filled in by the first successful poll.
+func binaryWatcher(exePath string, baseline *binaryIdentity, interval time.Duration, stop <-chan struct{}) {
 	misses := 0
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -280,9 +292,14 @@ func binaryWatcher(exePath string, interval time.Duration, stop <-chan struct{})
 				continue
 			}
 			misses = 0
-			if id := (binaryIdentity{info.ModTime(), info.Size()}); id != baseline {
+			id := binaryIdentity{info.ModTime(), info.Size()}
+			if baseline == nil {
+				baseline = &id
+				continue
+			}
+			if id != *baseline {
 				if os.Getenv("HWT_DEBUG") != "" {
-					fmt.Fprintf(os.Stderr, "DEBUG binaryWatcher change: %v -> %v, restarting\n", baseline, id)
+					fmt.Fprintf(os.Stderr, "DEBUG binaryWatcher change: %v -> %v, restarting\n", *baseline, id)
 				}
 				restartSelf(exePath)
 				return
@@ -315,6 +332,13 @@ func watchDaemonAt(sockPath, stateDir, session, binPath string, watchFiles []str
 		return nil // another daemon is alive; that's the desired state
 	}
 
+	// Fingerprint the binary BEFORE subscribing: anything that replaces it
+	// after this point — however quickly — is detected as a change.
+	var baseline *binaryIdentity
+	if binPath != "" {
+		baseline = fingerprintBinary(binPath)
+	}
+
 	conn, err := net.DialTimeout("unix", sockPath, socketTimeout)
 	if err != nil {
 		return nil // server not up; a watchdog will retry later
@@ -337,15 +361,16 @@ func watchDaemonAt(sockPath, stateDir, session, binPath string, watchFiles []str
 	}
 
 	triggers := make(chan trigger, 64)
+	schedStop := make(chan struct{})
 	schedDone := make(chan struct{})
-	go func() { runScheduler(triggers, ops, timings); close(schedDone) }()
+	go func() { runScheduler(triggers, ops, timings, schedStop); close(schedDone) }()
 
 	stopStat := make(chan struct{})
 	if len(watchFiles) > 0 {
 		go statWatcher(watchFiles, timings.StatInterval, triggers, stopStat)
 	}
 	if binPath != "" {
-		go binaryWatcher(binPath, timings.BinaryPoll, stopStat)
+		go binaryWatcher(binPath, baseline, timings.BinaryPoll, stopStat)
 	}
 
 	lastTitles := map[string]string{}
@@ -367,7 +392,7 @@ func watchDaemonAt(sockPath, stateDir, session, binPath string, watchFiles []str
 	}
 
 	close(stopStat)
-	close(triggers)
+	close(schedStop)
 	<-schedDone
 	return nil
 }

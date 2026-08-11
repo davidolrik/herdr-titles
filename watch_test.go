@@ -88,7 +88,7 @@ func TestSchedulerCoalescesAndScopes(t *testing.T) {
 	triggers := make(chan trigger, 16)
 	stop := make(chan struct{})
 	done := make(chan struct{})
-	go func() { runScheduler(triggers, rec.ops(), testTimings()); close(done) }()
+	go func() { runScheduler(triggers, rec.ops(), testTimings(), stop); close(done) }()
 
 	// A burst of title triggers plus one rename coalesces into one of each.
 	triggers <- trigger{kind: triggerTitle}
