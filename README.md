@@ -41,8 +41,13 @@ herdr plugin link /path/to/herdr-titles
 go build -o bin/herdr-titles .   # `plugin link` does not run the build step
 ```
 
-The plugin reacts to workspace/tab focus and rename events and to agent status
-changes; the title is only pushed when it actually changed.
+A small per-session daemon (started by the plugin, self-healing via watchdog
+hooks) subscribes to herdr's event stream and drives all updates — including
+agent title changes like Claude's `/rename`, which no plugin event hook can
+deliver. Work is debounced and scoped so even busy sessions cost near-zero
+CPU; titles are only pushed when they actually changed. It can also watch
+your environment files directly (`env { watch_files = [...] }`), which makes
+external refresh hooks unnecessary on the local machine.
 
 ## Configure
 
@@ -112,10 +117,14 @@ template = "${session} : ${getenv("OVERSEER_CONTEXT_DISPLAY_NAME")} › ${worksp
 Use `getenv("VAR")` rather than `env.VAR` when the variable might be absent —
 `getenv` returns `""`, `env.VAR` fails the render.
 
-Herdr events do not fire when only the environment changes, so give the
-external tool a change hook that pokes the plugin's `refresh` action (it
-bypasses the environment cache). From inside a herdr pane one command
-suffices:
+Herdr events do not fire when only the environment changes. On the machine
+where herdr runs, the simplest wiring is no wiring: list the file your tool
+rewrites in `env { watch_files = ["~/.local/var/overseer.env"] }` and the
+watch daemon picks changes up by itself within a few seconds.
+
+Alternatively, give the external tool a change hook that pokes the plugin's
+`refresh` action (it bypasses the environment cache). From inside a herdr
+pane one command suffices:
 
 ```sh
 herdr plugin action invoke davidolrik.titles.refresh

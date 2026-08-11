@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -154,6 +155,33 @@ func computeTabName(herdrBin string, tab Tab, snap *Snapshot, cfg *TabsConfig) (
 		return "", false
 	}
 	return FormatTabName(prog, cmdline, cfg), true
+}
+
+// RenameTabForAgentTitle applies an agent's session title to its tab — the
+// daemon's targeted path for pane.updated events, which carry the new title
+// in the payload, so no process-info subprocess is needed. The caller holds
+// the per-session lock. An empty title or an opted-out tab is a no-op.
+func RenameTabForAgentTitle(herdrBin, statePath, tabID, agentKind, title string, cfg *TabsConfig) error {
+	if !cfg.Enabled || !cfg.AgentTitles || title == "" {
+		return nil
+	}
+	name := FormatAgentTitle(agentKind, title, cfg)
+	label, ok := tabLabel(herdrBin, tabID)
+	if !ok {
+		return nil
+	}
+	states := LoadTabStates(statePath)
+	if os.Getenv("HWT_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "DEBUG rename tab=%s computed=%q label=%q state=%+v\n", tabID, name, label, states[tabID])
+	}
+	if !states.Eligible(tabID, label, name, false) {
+		return SaveTabStates(statePath, states) // Eligible may record an opt-out
+	}
+	if name != label {
+		renameTab(herdrBin, tabID, name)
+	}
+	states[tabID] = TabState{Auto: name, Enabled: true}
+	return SaveTabStates(statePath, states)
 }
 
 // ReconcileTabs walks every tab once, idempotently: compute the desired

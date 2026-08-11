@@ -78,6 +78,9 @@ type Config struct {
 	Scope      string // "all" or "focused-workspace"
 	Icons      map[string]string
 	Tabs       *TabsConfig
+	// EnvWatchFiles are files whose mtime changes should trigger a
+	// cache-bypassing title refresh (the watch daemon polls them).
+	EnvWatchFiles []string
 }
 
 type rawConfig struct {
@@ -101,6 +104,7 @@ type rawTabs struct {
 	Aliases          map[string]string `hcl:"aliases,optional"`
 	Substitutions    []rawSubstitution `hcl:"substitute,block"`
 	AgentTitles      *bool             `hcl:"agent_titles,optional"`
+	WatchTitles      *bool             `hcl:"watch_titles,optional"`
 	AgentTitleMaxLen *int              `hcl:"agent_title_max_len,optional"`
 	Icons            *rawTabIcons      `hcl:"icons,block"`
 }
@@ -118,8 +122,9 @@ type rawTabIcons struct {
 }
 
 type rawEnv struct {
-	Command []string `hcl:"command,optional"`
-	TTL     string   `hcl:"ttl,optional"`
+	Command    []string `hcl:"command,optional"`
+	TTL        string   `hcl:"ttl,optional"`
+	WatchFiles []string `hcl:"watch_files,optional"`
 }
 
 type rawAttention struct {
@@ -188,6 +193,9 @@ func LoadConfig(path string) (*Config, error) {
 			}
 			cfg.EnvTTL = ttl
 		}
+		for _, f := range raw.Env.WatchFiles {
+			cfg.EnvWatchFiles = append(cfg.EnvWatchFiles, expandTilde(f))
+		}
 	}
 
 	if raw.Attention != nil {
@@ -233,6 +241,7 @@ func resolveTabs(raw *rawTabs, path, shell string) (*TabsConfig, error) {
 	setBool(&tabs.ShowProgramArgs, raw.ShowProgramArgs)
 	setBool(&tabs.HideShell, raw.HideShell)
 	setBool(&tabs.AgentTitles, raw.AgentTitles)
+	setBool(&tabs.WatchTitles, raw.WatchTitles)
 	if raw.MaxNameLen != nil {
 		tabs.MaxNameLen = *raw.MaxNameLen
 	}

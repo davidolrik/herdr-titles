@@ -118,6 +118,7 @@ tabs {
 			"HERDR_PLUGIN_STATE_DIR="+stateDir,
 			"HERDR_BIN_PATH="+herdrBin,
 			"HERDR_SESSION=testsess",
+			"HERDR_SOCKET_PATH=/nonexistent/herdr.sock", // keep spawned daemons stillborn
 		)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("binary run (%s): %v\n%s", event, err, out)
@@ -181,16 +182,22 @@ func TestInitSubcommand(t *testing.T) {
 // infoDir, and records everything.
 func fakeFastHerdr(t *testing.T, dir, callsPath, infoDir, label string) string {
 	t.Helper()
+	// The label goes through a file, not through the script text: Go's %q
+	// escapes private-use glyphs into \U literals a shell won't decode.
+	labelPath := filepath.Join(dir, "label.txt")
+	if err := os.WriteFile(labelPath, []byte(label), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	script := fmt.Sprintf(`#!/bin/sh
 printf '%%s\n' "$*" >> %q
 if [ "$1" = "tab" ] && [ "$2" = "get" ]; then
-  printf '{"result":{"tab":{"tab_id":"%%s","label":%q}}}' "$3"
+  printf '{"result":{"tab":{"tab_id":"%%s","label":"%%s"}}}' "$3" "$(cat %q)"
 fi
 if [ "$1" = "pane" ] && [ "$2" = "process-info" ]; then
   pane=$(printf '%%s' "$4" | tr ':' '_')
   cat %q/"$pane".json 2>/dev/null || exit 1
 fi
-`, callsPath, label, infoDir)
+`, callsPath, labelPath, infoDir)
 	path := filepath.Join(dir, "herdr")
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -219,6 +226,7 @@ func TestFastPath(t *testing.T) {
 			"HERDR_SESSION=fastsess",
 			"HERDR_TAB_ID=w1:t1",
 			"HERDR_PANE_ID=w1:p1",
+			"HERDR_SOCKET_PATH=/nonexistent/herdr.sock", // keep spawned daemons stillborn
 		)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("binary %v: %v\n%s", args, err, out)

@@ -237,3 +237,39 @@ func TestExampleConfigTabsMatchBuiltInDefaults(t *testing.T) {
 		t.Errorf("example config tabs drift from built-in defaults:\nexample: %+v\nbuiltin: %+v", generated.Tabs, builtin.Tabs)
 	}
 }
+
+func TestLoadConfigWatchKnobs(t *testing.T) {
+	t.Setenv("HOME", "/home/probe")
+	// Defaults: watching titles on, no env files watched.
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.hcl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Tabs.WatchTitles {
+		t.Error("WatchTitles default = false, want true")
+	}
+	if len(cfg.EnvWatchFiles) != 0 {
+		t.Errorf("EnvWatchFiles default = %v, want empty", cfg.EnvWatchFiles)
+	}
+
+	path := writeConfig(t, `
+template = "x"
+env {
+  watch_files = ["~/.local/var/overseer.env", "/etc/motd"]
+}
+tabs {
+  watch_titles = false
+}
+`)
+	cfg, err = LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Tabs.WatchTitles {
+		t.Error("watch_titles = false not honored")
+	}
+	want := []string{"/home/probe/.local/var/overseer.env", "/etc/motd"}
+	if len(cfg.EnvWatchFiles) != 2 || cfg.EnvWatchFiles[0] != want[0] || cfg.EnvWatchFiles[1] != want[1] {
+		t.Errorf("EnvWatchFiles = %v, want %v (tilde expanded)", cfg.EnvWatchFiles, want)
+	}
+}

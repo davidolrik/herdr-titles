@@ -45,6 +45,12 @@ env {
   # (`herdr plugin action invoke davidolrik.titles.refresh`) always bypasses
   # the cache.
   ttl = "10s"
+
+  # Files the watch daemon polls for changes (mtime, every ~5s); a change
+  # triggers a cache-bypassing title refresh. Point this at whatever your
+  # environment tool rewrites (e.g. Overseer) and its context switches show
+  # up in the title with no external hook at all.
+  # watch_files = ["~/.local/var/overseer.env"]
 }
 
 # Automatic tab naming (ported from qu8n/herdr-automatic-rename, minus the
@@ -106,6 +112,12 @@ tabs {
   # still in front. Titles get their own, longer truncation limit.
   agent_titles        = true
   agent_title_max_len = 40
+
+  # Run the per-session watch daemon. It follows agent title changes (e.g.
+  # Claude's /rename) the moment they happen and handles all herdr events
+  # over the socket stream; the manifest's remaining event hooks only revive
+  # it if it dies. false = no daemon; titles then update on focus changes.
+  watch_titles = true
 
   # Nerd Font glyph in front of program names (needs a Nerd Font).
   icons {

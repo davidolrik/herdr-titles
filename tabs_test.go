@@ -267,3 +267,53 @@ func TestReconcileTabsPrunesClosedTabs(t *testing.T) {
 		t.Error("closed tab's state not pruned")
 	}
 }
+
+func TestRenameTabForAgentTitle(t *testing.T) {
+	dir := t.TempDir()
+	calls := filepath.Join(dir, "calls.log")
+	herdrBin := fakeFastHerdr(t, dir, calls, filepath.Join(dir, "info"), "\U000F06A9 Old title")
+	statePath := filepath.Join(dir, "tabstate.test.json")
+	cfg := DefaultTabsConfig()
+	cfg.ShellName = "zsh"
+	cfg.Icons.Enabled = true
+	if err := SaveTabStates(statePath, TabStates{"w1:t1": {Auto: "\U000F06A9 Old title", Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RenameTabForAgentTitle(herdrBin, statePath, "w1:t1", "claude", "New title", cfg); err != nil {
+		t.Fatal(err)
+	}
+	var renames []string
+	for _, line := range readCalls(t, calls) {
+		if strings.HasPrefix(line, "tab rename ") {
+			renames = append(renames, strings.TrimPrefix(line, "tab rename "))
+		}
+	}
+	want := "w1:t1 \U000F06A9 New title"
+	if len(renames) != 1 || renames[0] != want {
+		t.Fatalf("renames = %v, want [%s]", renames, want)
+	}
+	if st := LoadTabStates(statePath)["w1:t1"]; st.Auto != "\U000F06A9 New title" || !st.Enabled {
+		t.Errorf("state = %+v, want owned new title", st)
+	}
+
+	// Opted-out tabs stay untouched; empty titles are ignored.
+	if err := SaveTabStates(statePath, TabStates{"w1:t1": {Enabled: false}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := RenameTabForAgentTitle(herdrBin, statePath, "w1:t1", "claude", "Another", cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := RenameTabForAgentTitle(herdrBin, statePath, "w1:t1", "claude", "", cfg); err != nil {
+		t.Fatal(err)
+	}
+	var after []string
+	for _, line := range readCalls(t, calls) {
+		if strings.HasPrefix(line, "tab rename ") {
+			after = append(after, line)
+		}
+	}
+	if len(after) != 1 {
+		t.Errorf("opted-out/empty-title caused renames: %v", after)
+	}
+}

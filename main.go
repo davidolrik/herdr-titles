@@ -52,12 +52,27 @@ func run(event string) error {
 		return err
 	}
 	session := envOr("HERDR_SESSION", "default")
-	return withLock(stateDir, session, func() error { return fullPass(event) })
+	return withLock(stateDir, session, func() error {
+		return pass(event, true, event == "refresh")
+	})
 }
 
-// fullPass is one idempotent reconcile: tabs, then the window title. The
-// caller holds the lock.
-func fullPass(event string) error {
+// runTitleOnly is the daemon's cheap pass: window title only, no tab
+// reconcile and therefore no per-tab process-info subprocesses.
+func runTitleOnly(event string, bypassEnvCache bool) error {
+	stateDir := pluginStateDir()
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		return err
+	}
+	session := envOr("HERDR_SESSION", "default")
+	return withLock(stateDir, session, func() error {
+		return pass(event, false, bypassEnvCache)
+	})
+}
+
+// pass is one idempotent reconcile: optionally tabs, then the window title.
+// The caller holds the per-session lock.
+func pass(event string, withTabs, bypassEnvCache bool) error {
 	configDir := pluginConfigDir()
 	stateDir := pluginStateDir()
 
@@ -66,10 +81,9 @@ func fullPass(event string) error {
 		return err
 	}
 
-	// The refresh action exists to pick up external changes (e.g. an Overseer
-	// context switch), so it must not serve cached environment.
-	bypassCache := event == "refresh"
-	harvested, err := HarvestEnv(cfg.EnvCommand, filepath.Join(stateDir, "env.cache"), cfg.EnvTTL, bypassCache)
+	// A cache bypass picks up external changes (the refresh action, or the
+	// daemon noticing a watched env file change).
+	harvested, err := HarvestEnv(cfg.EnvCommand, filepath.Join(stateDir, "env.cache"), cfg.EnvTTL, bypassEnvCache)
 	if err != nil {
 		return err
 	}
@@ -98,7 +112,7 @@ func fullPass(event string) error {
 
 	// Tabs first, so the window title's ${tab} sees the fresh label. The
 	// reset action re-adopts the invoking tab regardless of its opt-out.
-	if cfg.Tabs.Enabled {
+	if withTabs && cfg.Tabs.Enabled {
 		forceTab := ""
 		if event == "reset" {
 			forceTab = envOr("HERDR_TAB_ID", contextTabID())
@@ -190,13 +204,16 @@ func runFast(mode string, args []string) error {
 		return err
 	}
 
+	// Every shell prompt is a chance to revive a dead watch daemon.
+	ensureDaemon(stateDir, envOr("HERDR_SESSION", "default"))
+
 	// First pass under the lock is the single-tab fast rename; any rerun flag
 	// raised meanwhile escalates to a full reconcile, which is a superset —
 	// a structural event that raced this hook still gets handled.
 	first := true
 	return withLock(stateDir, envOr("HERDR_SESSION", "default"), func() error {
 		if !first {
-			return fullPass("rerun")
+			return pass("rerun", true, false)
 		}
 		first = false
 
@@ -252,6 +269,18 @@ func main() {
 		err = runInit()
 	case "refresh-all":
 		err = runRefreshAll()
+	case "watch":
+		if len(os.Args) > 2 && os.Args[2] == "--detached" {
+			err = runWatchDetached()
+		} else {
+			err = runWatchParent()
+		}
+	case "workspace.focused", "tab.focused":
+		// Watchdog hooks: a live daemon already handles the event; a dead
+		// one is revived and the gap covered.
+		err = runWatchdog(event)
+	case "pane.agent_status_changed":
+		err = runStatusHook(event)
 	case "preexec", "precmd":
 		err = runFast(event, os.Args[2:])
 	default:

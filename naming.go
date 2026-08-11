@@ -47,7 +47,10 @@ type TabsConfig struct {
 	Substitutions    []Substitution
 	AgentTitles      bool
 	AgentTitleMaxLen int
-	Icons            IconsConfig
+	// WatchTitles enables the per-session daemon that follows agent title
+	// changes (Claude /rename etc.) the moment they happen.
+	WatchTitles bool
+	Icons       IconsConfig
 }
 
 func applySubstitutions(s string, subs []Substitution) string {
@@ -171,6 +174,7 @@ func DefaultTabsConfig() *TabsConfig {
 		Aliases:          map[string]string{},
 		AgentTitles:      true,
 		AgentTitleMaxLen: 40,
+		WatchTitles:      true,
 		Icons: IconsConfig{
 			Enabled:  false,
 			Style:    "name_and_icon",
