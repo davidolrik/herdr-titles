@@ -396,3 +396,82 @@ func TestDaemonAliveAndWatchdog(t *testing.T) {
 		t.Error("inline reconcile did not run (expected snapshot failure)")
 	}
 }
+
+func TestWatchDaemonRestartsOnBinaryChange(t *testing.T) {
+	srv := newFakeEventServer(t, true)
+	stateDir := t.TempDir()
+	binPath := filepath.Join(stateDir, "fake-binary")
+	if err := os.WriteFile(binPath, []byte("v1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	restarted := make(chan string, 1)
+	orig := restartSelf
+	restartSelf = func(path string) { restarted <- path }
+	defer func() { restartSelf = orig }()
+
+	timings := testTimings()
+	timings.BinaryPoll = 20 * time.Millisecond
+	done := make(chan error, 1)
+	go func() {
+		done <- watchDaemonAt(srv.sockPath, stateDir, "wtest", binPath, nil, (&opsRecorder{}).ops(), timings)
+	}()
+	<-srv.subGot
+
+	// Untouched binary: no restart.
+	select {
+	case p := <-restarted:
+		t.Fatalf("restart without binary change: %s", p)
+	case <-time.After(120 * time.Millisecond):
+	}
+
+	// Replace the binary (new mtime/size): the daemon must restart itself.
+	if err := os.WriteFile(binPath, []byte("v2-bigger"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case p := <-restarted:
+		if p != binPath {
+			t.Errorf("restarted with %q, want %q", p, binPath)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("binary change never triggered a restart")
+	}
+
+	close(srv.closeSub)
+	<-done
+}
+
+func TestWatchDaemonRestartsOnBinaryRemoval(t *testing.T) {
+	srv := newFakeEventServer(t, true)
+	stateDir := t.TempDir()
+	binPath := filepath.Join(stateDir, "fake-binary")
+	if err := os.WriteFile(binPath, []byte("v1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	restarted := make(chan string, 1)
+	orig := restartSelf
+	restartSelf = func(path string) { restarted <- path }
+	defer func() { restartSelf = orig }()
+
+	timings := testTimings()
+	timings.BinaryPoll = 20 * time.Millisecond
+	done := make(chan error, 1)
+	go func() {
+		done <- watchDaemonAt(srv.sockPath, stateDir, "wtest", binPath, nil, (&opsRecorder{}).ops(), timings)
+	}()
+	<-srv.subGot
+
+	// Removal (uninstall): after consecutive misses the daemon hands off —
+	// the real restartSelf exec-fails on a missing file and exits.
+	if err := os.Remove(binPath); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-restarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("binary removal never triggered a handoff")
+	}
+	close(srv.closeSub)
+	<-done
+}

@@ -62,6 +62,7 @@ type watchTimings struct {
 	FullFloor    time.Duration
 	StatInterval time.Duration
 	ReadDeadline time.Duration
+	BinaryPoll   time.Duration
 }
 
 func defaultWatchTimings() watchTimings {
@@ -70,6 +71,7 @@ func defaultWatchTimings() watchTimings {
 		FullFloor:    2 * time.Second,
 		StatInterval: 5 * time.Second,
 		ReadDeadline: 10 * time.Minute,
+		BinaryPoll:   15 * time.Second,
 	}
 }
 
@@ -231,11 +233,76 @@ func watchLockPath(stateDir, session string) string {
 	return filepath.Join(stateDir, "watch.lock."+session)
 }
 
-// watchDaemon is the detached daemon body: singleton lock, subscribe, then
-// pump events into the scheduler until the stream ends. watchFiles are
-// stat-polled for env changes. Returns nil on every orderly exit — a held
-// lock or a dead server are normal, not errors.
+// restartSelf replaces the running daemon with the binary at path — the
+// same PID execs the freshly installed (or freshly rebuilt) image, and Go's
+// CLOEXEC fds release the singleton flock atomically at exec so the new
+// image re-acquires it without a race. If the exec fails (binary gone:
+// uninstall), the daemon simply dies; watchdog hooks stop reviving it once
+// the plugin is unregistered. A var so tests can stub the exec.
+var restartSelf = func(exePath string) {
+	_ = syscall.Exec(exePath, []string{exePath, "watch", "--detached"}, os.Environ())
+	os.Exit(0)
+}
+
+// binaryIdentity is the executable's change-detection fingerprint.
+type binaryIdentity struct {
+	modTime time.Time
+	size    int64
+}
+
+// binaryWatcher polls the daemon's own executable and hands the process over
+// to a replaced binary. A single stat error is tolerated (installs replace
+// the checkout with a brief rename gap); two consecutive misses mean the
+// plugin is gone and the handoff doubles as an orderly exit.
+func binaryWatcher(exePath string, interval time.Duration, stop <-chan struct{}) {
+	info, err := os.Stat(exePath)
+	if os.Getenv("HWT_DEBUG") != "" {
+		fmt.Fprintf(os.Stderr, "DEBUG binaryWatcher exe=%q statErr=%v interval=%v\n", exePath, err, interval)
+	}
+	if err != nil {
+		return // can't fingerprint; skip self-restart for this run
+	}
+	baseline := binaryIdentity{info.ModTime(), info.Size()}
+	misses := 0
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			info, err := os.Stat(exePath)
+			if err != nil {
+				if misses++; misses >= 2 {
+					restartSelf(exePath)
+					return
+				}
+				continue
+			}
+			misses = 0
+			if id := (binaryIdentity{info.ModTime(), info.Size()}); id != baseline {
+				if os.Getenv("HWT_DEBUG") != "" {
+					fmt.Fprintf(os.Stderr, "DEBUG binaryWatcher change: %v -> %v, restarting\n", baseline, id)
+				}
+				restartSelf(exePath)
+				return
+			}
+		}
+	}
+}
+
+// watchDaemon runs the daemon without binary self-restart (tests).
 func watchDaemon(sockPath, stateDir, session string, watchFiles []string, ops watchOps, timings watchTimings) error {
+	return watchDaemonAt(sockPath, stateDir, session, "", watchFiles, ops, timings)
+}
+
+// watchDaemonAt is the detached daemon body: singleton lock, subscribe, then
+// pump events into the scheduler until the stream ends. watchFiles are
+// stat-polled for env changes; binPath (when non-empty) is the daemon's own
+// executable, watched so a plugin update restarts the daemon onto the new
+// binary automatically. Returns nil on every orderly exit — a held lock or a
+// dead server are normal, not errors.
+func watchDaemonAt(sockPath, stateDir, session, binPath string, watchFiles []string, ops watchOps, timings watchTimings) error {
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return err
 	}
@@ -276,6 +343,9 @@ func watchDaemon(sockPath, stateDir, session string, watchFiles []string, ops wa
 	stopStat := make(chan struct{})
 	if len(watchFiles) > 0 {
 		go statWatcher(watchFiles, timings.StatInterval, triggers, stopStat)
+	}
+	if binPath != "" {
+		go binaryWatcher(binPath, timings.BinaryPoll, stopStat)
 	}
 
 	lastTitles := map[string]string{}
@@ -390,6 +460,7 @@ func runWatchDetached() error {
 		return err
 	}
 	stateDir := pluginStateDir()
+	exePath, _ := os.Executable()
 	ops := watchOps{
 		full: func() { _ = run("watch.event") },
 		title: func(bypass bool) {
@@ -404,7 +475,7 @@ func runWatchDetached() error {
 			})
 		},
 	}
-	return watchDaemon(sockPath, stateDir, session, cfg.EnvWatchFiles, ops, defaultWatchTimings())
+	return watchDaemonAt(sockPath, stateDir, session, exePath, cfg.EnvWatchFiles, ops, defaultWatchTimings())
 }
 
 // daemonAlive probes the daemon's liveness lock: if we can take it, nobody
