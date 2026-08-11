@@ -128,6 +128,11 @@ tabs {
   }
 }
 
+# Keep nerd-font glyphs in the WINDOW title. Off by default on macOS, where
+# the title bar renders in the system font and private-use glyphs show as
+# tofu boxes; tab labels keep their icons either way. Emoji always stay.
+# titlebar_icons = false   # default: false on macOS, true elsewhere
+
 attention {
   # Herdr agent states that count as "requires attention", in display order.
   # All states: idle, working, blocked, done, unknown.

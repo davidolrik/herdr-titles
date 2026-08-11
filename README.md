@@ -21,7 +21,9 @@ mysession : Work @ HQ › myproject › 1 › ×2 ✓1
   default; every state configurable).
 - **Automatic tab naming** — tabs follow their foreground program, with
   optional Nerd Font icons, aliases, regex substitutions, and a
-  `hide_shell` mode. Ported from
+  `hide_shell` mode. Icons stay in the tab bar but are stripped from the
+  window title on macOS, whose title bar can't render them
+  (`titlebar_icons`). Ported from
   [qu8n/herdr-automatic-rename](https://github.com/qu8n/herdr-automatic-rename)
   (MIT), minus the jump-key numbering.
 - **Live agent session titles** — a tab hosting a coding agent is named

@@ -68,6 +68,28 @@ func PadIcons(s string) string {
 	return b.String()
 }
 
+// StripIcons removes private-use-area runes (nerd-font icons) and the pad
+// spaces that follow them. The macOS window title bar renders in the system
+// font, which has no nerd-font glyphs — icons become tofu boxes there, so
+// the window title drops them while the tab bar (rendered in the terminal's
+// own font) keeps them. Emoji are ordinary Unicode and stay.
+func StripIcons(s string) string {
+	var b strings.Builder
+	skipSpaces := false
+	for _, r := range s {
+		if (r >= 0xE000 && r <= 0xF8FF) || (r >= 0xF0000 && r <= 0xFFFFD) || (r >= 0x100000 && r <= 0x10FFFD) {
+			skipSpaces = true
+			continue
+		}
+		if skipSpaces && r == ' ' {
+			continue
+		}
+		skipSpaces = false
+		b.WriteRune(r)
+	}
+	return strings.TrimSpace(b.String())
+}
+
 // expandTilde resolves a leading "~/" against the current home directory.
 func expandTilde(path string) string {
 	if path == "~" || strings.HasPrefix(path, "~/") {
@@ -119,6 +141,11 @@ func getenvFunc(env map[string]string) function.Function {
 // ComposeTitle evaluates the configured template against the current herdr
 // snapshot, session name, and harvested environment.
 func ComposeTitle(cfg *Config, snap *Snapshot, session string, env map[string]string) (string, error) {
+	workspaceLabel, tabLabel := snap.WorkspaceLabel, snap.TabLabel
+	if !cfg.TitlebarIcons {
+		workspaceLabel = StripIcons(workspaceLabel)
+		tabLabel = StripIcons(tabLabel)
+	}
 	counts := scopedCounts(snap.Agents, cfg, snap.FocusedWorkspaceID)
 	countVals := map[string]cty.Value{}
 	for status, n := range counts {
@@ -132,8 +159,8 @@ func ComposeTitle(cfg *Config, snap *Snapshot, session string, env map[string]st
 
 	ctx := &hcl.EvalContext{
 		Variables: map[string]cty.Value{
-			"workspace": cty.StringVal(snap.WorkspaceLabel),
-			"tab":       cty.StringVal(snap.TabLabel),
+			"workspace": cty.StringVal(workspaceLabel),
+			"tab":       cty.StringVal(tabLabel),
 			"session":   cty.StringVal(session),
 			"attention": cty.StringVal(RenderAttention(snap.Agents, cfg, snap.FocusedWorkspaceID)),
 			"counts":    cty.ObjectVal(countVals),

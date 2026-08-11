@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -101,7 +102,10 @@ func TestPadIcons(t *testing.T) {
 }
 
 func TestComposeTitlePadIconsFunction(t *testing.T) {
-	cfg := testConfig(t, `template = "${pad_icons(tab)}"`)
+	cfg := testConfig(t, `
+template       = "${pad_icons(tab)}"
+titlebar_icons = true # this test exercises the padding, not the stripping
+`)
 	snap := composeSnap()
 	snap.TabLabel = "\U000F06A9 claude"
 	got, err := ComposeTitle(cfg, snap, "s", map[string]string{})
@@ -240,5 +244,64 @@ func TestComposeTitleDefaultTemplateWithOverseer(t *testing.T) {
 	want := "main : Client @ Andel › myspace › mytab › ×1"
 	if got != want {
 		t.Errorf("ComposeTitle = %q, want %q", got, want)
+	}
+}
+
+func TestStripIcons(t *testing.T) {
+	cases := []struct{ name, in, want string }{
+		{"padded nerd font icon", "\U000F06A9  Fix flaky test", "Fix flaky test"},
+		{"unpadded icon", " nvim", "nvim"},
+		{"icon glued to text", "nvim", "nvim"},
+		{"mid-string icon", "a  b", "a b"},
+		{"plain text untouched", "zsh", "zsh"},
+		{"emoji kept", "⭐ starred", "⭐ starred"},
+		{"empty", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := StripIcons(tc.in); got != tc.want {
+				t.Errorf("StripIcons(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestComposeTitleTitlebarIcons(t *testing.T) {
+	cfg := testConfig(t, `
+template = "${workspace}|${tab}"
+titlebar_icons = false
+`)
+	snap := composeSnap()
+	snap.WorkspaceLabel = " repo"
+	snap.TabLabel = "\U000F06A9  Fix flaky test"
+	got, err := ComposeTitle(cfg, snap, "s", map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "repo|Fix flaky test" {
+		t.Errorf("stripped title = %q, want %q", got, "repo|Fix flaky test")
+	}
+
+	cfg = testConfig(t, `
+template = "${workspace}|${tab}"
+titlebar_icons = true
+`)
+	got, err = ComposeTitle(cfg, snap, "s", map[string]string{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != " repo|\U000F06A9  Fix flaky test" {
+		t.Errorf("icons-on title = %q, want glyphs kept", got)
+	}
+}
+
+func TestTitlebarIconsDefaultPerOS(t *testing.T) {
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.hcl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := runtime.GOOS != "darwin"
+	if cfg.TitlebarIcons != want {
+		t.Errorf("TitlebarIcons default on %s = %v, want %v", runtime.GOOS, cfg.TitlebarIcons, want)
 	}
 }

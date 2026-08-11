@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"time"
 
 	"github.com/hashicorp/hcl/v2"
@@ -81,13 +82,18 @@ type Config struct {
 	// EnvWatchFiles are files whose mtime changes should trigger a
 	// cache-bypassing title refresh (the watch daemon polls them).
 	EnvWatchFiles []string
+	// TitlebarIcons keeps nerd-font glyphs in the WINDOW title. Off by
+	// default on macOS: its title bar renders in the system font, where
+	// private-use glyphs are tofu. Tab labels are unaffected.
+	TitlebarIcons bool
 }
 
 type rawConfig struct {
-	Template  hcl.Expression `hcl:"template,optional"`
-	Env       *rawEnv        `hcl:"env,block"`
-	Attention *rawAttention  `hcl:"attention,block"`
-	Tabs      *rawTabs       `hcl:"tabs,block"`
+	Template      hcl.Expression `hcl:"template,optional"`
+	TitlebarIcons *bool          `hcl:"titlebar_icons,optional"`
+	Env           *rawEnv        `hcl:"env,block"`
+	Attention     *rawAttention  `hcl:"attention,block"`
+	Tabs          *rawTabs       `hcl:"tabs,block"`
 }
 
 // Pointer fields distinguish "absent" from a deliberate zero value (enabled =
@@ -166,14 +172,18 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	cfg := &Config{
-		Template: raw.Template,
-		Scope:    "all",
-		Statuses: defaults.Attention.Statuses,
-		Icons:    defaults.Attention.Icons,
-		EnvTTL:   10 * time.Second,
+		Template:      raw.Template,
+		TitlebarIcons: runtime.GOOS != "darwin",
+		Scope:         "all",
+		Statuses:      defaults.Attention.Statuses,
+		Icons:         defaults.Attention.Icons,
+		EnvTTL:        10 * time.Second,
 	}
 	if cfg.Template == nil {
 		cfg.Template = defaults.Template
+	}
+	if raw.TitlebarIcons != nil {
+		cfg.TitlebarIcons = *raw.TitlebarIcons
 	}
 
 	shell := os.Getenv("SHELL")
