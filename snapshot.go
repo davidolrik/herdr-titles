@@ -1,15 +1,9 @@
 package main
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
-	"time"
 )
-
-const herdrTimeout = 10 * time.Second
 
 // Agent is the slice of a herdr agent the plugin cares about.
 type Agent struct {
@@ -47,42 +41,41 @@ type Snapshot struct {
 	Panes              []Pane
 }
 
+// decodeSnapshot parses a session.snapshot RESULT payload: {"snapshot":{...}}.
 func decodeSnapshot(data []byte) (*Snapshot, error) {
 	var payload struct {
-		Result struct {
-			Snapshot *struct {
-				FocusedWorkspaceID string `json:"focused_workspace_id"`
-				FocusedTabID       string `json:"focused_tab_id"`
-				Workspaces         []struct {
-					WorkspaceID string `json:"workspace_id"`
-					Label       string `json:"label"`
-				} `json:"workspaces"`
-				Tabs []struct {
-					TabID       string `json:"tab_id"`
-					WorkspaceID string `json:"workspace_id"`
-					Label       string `json:"label"`
-					PaneCount   int    `json:"pane_count"`
-					Focused     bool   `json:"focused"`
-				} `json:"tabs"`
-				Panes []struct {
-					PaneID  string `json:"pane_id"`
-					TabID   string `json:"tab_id"`
-					Focused bool   `json:"focused"`
-				} `json:"panes"`
-				Agents []struct {
-					AgentStatus   string `json:"agent_status"`
-					WorkspaceID   string `json:"workspace_id"`
-					PaneID        string `json:"pane_id"`
-					Agent         string `json:"agent"`
-					TitleStripped string `json:"terminal_title_stripped"`
-				} `json:"agents"`
-			} `json:"snapshot"`
-		} `json:"result"`
+		Snapshot *struct {
+			FocusedWorkspaceID string `json:"focused_workspace_id"`
+			FocusedTabID       string `json:"focused_tab_id"`
+			Workspaces         []struct {
+				WorkspaceID string `json:"workspace_id"`
+				Label       string `json:"label"`
+			} `json:"workspaces"`
+			Tabs []struct {
+				TabID       string `json:"tab_id"`
+				WorkspaceID string `json:"workspace_id"`
+				Label       string `json:"label"`
+				PaneCount   int    `json:"pane_count"`
+				Focused     bool   `json:"focused"`
+			} `json:"tabs"`
+			Panes []struct {
+				PaneID  string `json:"pane_id"`
+				TabID   string `json:"tab_id"`
+				Focused bool   `json:"focused"`
+			} `json:"panes"`
+			Agents []struct {
+				AgentStatus   string `json:"agent_status"`
+				WorkspaceID   string `json:"workspace_id"`
+				PaneID        string `json:"pane_id"`
+				Agent         string `json:"agent"`
+				TitleStripped string `json:"terminal_title_stripped"`
+			} `json:"agents"`
+		} `json:"snapshot"`
 	}
 	if err := json.Unmarshal(data, &payload); err != nil {
 		return nil, fmt.Errorf("decode snapshot: %w", err)
 	}
-	raw := payload.Result.Snapshot
+	raw := payload.Snapshot
 	if raw == nil {
 		return nil, fmt.Errorf("decode snapshot: no snapshot payload in response")
 	}
@@ -117,15 +110,11 @@ func decodeSnapshot(data []byte) (*Snapshot, error) {
 	return snap, nil
 }
 
-// FetchSnapshot runs `<herdrBin> api snapshot` and decodes the result.
-func FetchSnapshot(herdrBin string) (*Snapshot, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), herdrTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, herdrBin, "api", "snapshot")
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("%s api snapshot: %w", herdrBin, err)
+// FetchSnapshot asks the session socket for a full state snapshot.
+func FetchSnapshot(sockPath string) (*Snapshot, error) {
+	result, err := apiRequest(sockPath, "session.snapshot", nil)
+	if err != nil {
+		return nil, err
 	}
-	return decodeSnapshot(stdout.Bytes())
+	return decodeSnapshot(result)
 }

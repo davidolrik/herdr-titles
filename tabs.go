@@ -6,12 +6,9 @@ package main
 // tab after the agent's session title instead of the process name.
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 )
 
@@ -49,35 +46,29 @@ func activePane(tab Tab, panes []Pane) string {
 // argv0 -> argv[0] -> name precedence is load-bearing: .name is the on-disk
 // executable, which reports a version string for claude and a ".<prog>-wrapped"
 // on NixOS. A leading "-" (login shell) and any path prefix are stripped.
-func paneProgram(herdrBin, paneID string) (prog, cmdline string, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), herdrTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, herdrBin, "pane", "process-info", "--pane", paneID)
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	if err := cmd.Run(); err != nil {
-		return "", "", fmt.Errorf("pane process-info %s: %w", paneID, err)
+func paneProgram(sockPath, paneID string) (prog, cmdline string, err error) {
+	result, err := apiRequest(sockPath, "pane.process_info", map[string]string{"pane_id": paneID})
+	if err != nil {
+		return "", "", err
 	}
 
 	var payload struct {
-		Result struct {
-			ProcessInfo struct {
-				ForegroundProcessGroupID int `json:"foreground_process_group_id"`
-				ForegroundProcesses      []struct {
-					PID     int      `json:"pid"`
-					Argv0   string   `json:"argv0"`
-					Argv    []string `json:"argv"`
-					Cmdline string   `json:"cmdline"`
-					Name    string   `json:"name"`
-				} `json:"foreground_processes"`
-			} `json:"process_info"`
-		} `json:"result"`
+		ProcessInfo struct {
+			ForegroundProcessGroupID int `json:"foreground_process_group_id"`
+			ForegroundProcesses      []struct {
+				PID     int      `json:"pid"`
+				Argv0   string   `json:"argv0"`
+				Argv    []string `json:"argv"`
+				Cmdline string   `json:"cmdline"`
+				Name    string   `json:"name"`
+			} `json:"foreground_processes"`
+		} `json:"process_info"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil {
-		return "", "", fmt.Errorf("pane process-info %s: %w", paneID, err)
+	if err := json.Unmarshal(result, &payload); err != nil {
+		return "", "", fmt.Errorf("pane.process_info %s: %w", paneID, err)
 	}
 
-	info := payload.Result.ProcessInfo
+	info := payload.ProcessInfo
 	for _, p := range info.ForegroundProcesses {
 		if p.PID != info.ForegroundProcessGroupID {
 			continue
@@ -99,46 +90,38 @@ func paneProgram(herdrBin, paneID string) (prog, cmdline string, err error) {
 		}
 		return prog, cmdline, nil
 	}
-	return "", "", fmt.Errorf("pane process-info %s: no group leader", paneID)
+	return "", "", fmt.Errorf("pane.process_info %s: no group leader", paneID)
 }
 
 // tabLabel fetches a tab's current label. ok is false when the call fails or
 // returns no tab — a failed get must NOT look like an empty label, which
 // would read as a placeholder and clobber a hand-picked name.
-func tabLabel(herdrBin, tabID string) (string, bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), herdrTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, herdrBin, "tab", "get", tabID)
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	if err := cmd.Run(); err != nil {
+func tabLabel(sockPath, tabID string) (string, bool) {
+	result, err := apiRequest(sockPath, "tab.get", map[string]string{"tab_id": tabID})
+	if err != nil {
 		return "", false
 	}
 	var payload struct {
-		Result struct {
-			Tab *struct {
-				Label string `json:"label"`
-			} `json:"tab"`
-		} `json:"result"`
+		Tab *struct {
+			Label string `json:"label"`
+		} `json:"tab"`
 	}
-	if err := json.Unmarshal(stdout.Bytes(), &payload); err != nil || payload.Result.Tab == nil {
+	if err := json.Unmarshal(result, &payload); err != nil || payload.Tab == nil {
 		return "", false
 	}
-	return payload.Result.Tab.Label, true
+	return payload.Tab.Label, true
 }
 
 // renameTab issues the rename; failures are logged by the caller's exit path
 // only in aggregate — a rename race is recovered by the next idempotent pass.
-func renameTab(herdrBin, tabID, label string) {
-	ctx, cancel := context.WithTimeout(context.Background(), herdrTimeout)
-	defer cancel()
-	_ = exec.CommandContext(ctx, herdrBin, "tab", "rename", tabID, label).Run()
+func renameTab(sockPath, tabID, label string) {
+	_, _ = apiRequest(sockPath, "tab.rename", map[string]string{"tab_id": tabID, "label": label})
 }
 
 // computeTabName determines the label a tab should carry, or ok=false when no
 // name is computable (no active pane, process-info blip) — in which case the
 // tab must be left alone, never fall through to a shell name.
-func computeTabName(herdrBin string, tab Tab, snap *Snapshot, cfg *TabsConfig) (string, bool) {
+func computeTabName(sockPath string, tab Tab, snap *Snapshot, cfg *TabsConfig) (string, bool) {
 	paneID := activePane(tab, snap.Panes)
 	if paneID == "" {
 		return "", false
@@ -150,7 +133,7 @@ func computeTabName(herdrBin string, tab Tab, snap *Snapshot, cfg *TabsConfig) (
 			}
 		}
 	}
-	prog, cmdline, err := paneProgram(herdrBin, paneID)
+	prog, cmdline, err := paneProgram(sockPath, paneID)
 	if err != nil || prog == "" {
 		return "", false
 	}
@@ -161,12 +144,12 @@ func computeTabName(herdrBin string, tab Tab, snap *Snapshot, cfg *TabsConfig) (
 // daemon's targeted path for pane.updated events, which carry the new title
 // in the payload, so no process-info subprocess is needed. The caller holds
 // the per-session lock. An empty title or an opted-out tab is a no-op.
-func RenameTabForAgentTitle(herdrBin, statePath, tabID, agentKind, title string, cfg *TabsConfig) error {
+func RenameTabForAgentTitle(sockPath, statePath, tabID, agentKind, title string, cfg *TabsConfig) error {
 	if !cfg.Enabled || !cfg.AgentTitles || title == "" {
 		return nil
 	}
 	name := FormatAgentTitle(agentKind, title, cfg)
-	label, ok := tabLabel(herdrBin, tabID)
+	label, ok := tabLabel(sockPath, tabID)
 	if !ok {
 		return nil
 	}
@@ -178,7 +161,7 @@ func RenameTabForAgentTitle(herdrBin, statePath, tabID, agentKind, title string,
 		return SaveTabStates(statePath, states) // Eligible may record an opt-out
 	}
 	if name != label {
-		renameTab(herdrBin, tabID, name)
+		renameTab(sockPath, tabID, name)
 	}
 	states[tabID] = TabState{Auto: name, Enabled: true}
 	return SaveTabStates(statePath, states)
@@ -188,7 +171,7 @@ func RenameTabForAgentTitle(herdrBin, statePath, tabID, agentKind, title string,
 // label, check eligibility, rename only when the label actually changes, and
 // record ownership. Prunes state for tabs that no longer exist. forceTab
 // re-adopts one tab regardless of its opt-out (the reset action).
-func ReconcileTabs(herdrBin string, snap *Snapshot, cfg *TabsConfig, states TabStates, forceTab string) {
+func ReconcileTabs(sockPath string, snap *Snapshot, cfg *TabsConfig, states TabStates, forceTab string) {
 	var seen []string
 	for _, tab := range snap.Tabs {
 		seen = append(seen, tab.TabID)
@@ -201,7 +184,7 @@ func ReconcileTabs(herdrBin string, snap *Snapshot, cfg *TabsConfig, states TabS
 			continue
 		}
 
-		name, ok := computeTabName(herdrBin, tab, snap, cfg)
+		name, ok := computeTabName(sockPath, tab, snap, cfg)
 		if !ok {
 			continue
 		}
@@ -213,7 +196,7 @@ func ReconcileTabs(herdrBin string, snap *Snapshot, cfg *TabsConfig, states TabS
 			continue
 		}
 		if name != tab.Label {
-			renameTab(herdrBin, tab.TabID, name)
+			renameTab(sockPath, tab.TabID, name)
 			if tab.TabID == snap.FocusedTabID {
 				snap.TabLabel = name
 			}

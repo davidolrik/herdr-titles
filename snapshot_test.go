@@ -1,16 +1,11 @@
 package main
 
 import (
-	"os"
 	"testing"
 )
 
 func TestDecodeSnapshotFixture(t *testing.T) {
-	data, err := os.ReadFile("testdata/snapshot.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	snap, err := decodeSnapshot(data)
+	snap, err := decodeSnapshot(fixtureSnapshotResult(t))
 	if err != nil {
 		t.Fatalf("decodeSnapshot: %v", err)
 	}
@@ -58,7 +53,7 @@ func TestDecodeSnapshotFixture(t *testing.T) {
 }
 
 func TestDecodeSnapshotInvalid(t *testing.T) {
-	if _, err := decodeSnapshot([]byte(`{"result":{}}`)); err == nil {
+	if _, err := decodeSnapshot([]byte(`{}`)); err == nil {
 		t.Fatal("expected error for snapshot without payload, got nil")
 	}
 	if _, err := decodeSnapshot([]byte(`not json`)); err == nil {

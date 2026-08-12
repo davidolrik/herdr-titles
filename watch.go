@@ -494,7 +494,7 @@ func runWatchDetached() error {
 		rename: func(p paneEvent) {
 			_ = withLock(stateDir, session, func() error {
 				return RenameTabForAgentTitle(
-					envOr("HERDR_BIN_PATH", "herdr"),
+					sockPath,
 					tabStatePath(stateDir, session),
 					p.TabID, p.Agent, p.Title, cfg.Tabs)
 			})

@@ -102,8 +102,8 @@ func pass(event string, withTabs, bypassEnvCache bool) error {
 		env[k] = v
 	}
 
-	herdrBin := envOr("HERDR_BIN_PATH", "herdr")
-	snap, err := FetchSnapshot(herdrBin)
+	sock := sessionSocketPath()
+	snap, err := FetchSnapshot(sock)
 	if err != nil {
 		return err
 	}
@@ -122,7 +122,7 @@ func pass(event string, withTabs, bypassEnvCache bool) error {
 		}
 		statePath := tabStatePath(stateDir, session)
 		tabStates := LoadTabStates(statePath)
-		ReconcileTabs(herdrBin, snap, cfg.Tabs, tabStates, forceTab)
+		ReconcileTabs(sock, snap, cfg.Tabs, tabStates, forceTab)
 		if err := SaveTabStates(statePath, tabStates); err != nil {
 			return err
 		}
@@ -135,7 +135,7 @@ func pass(event string, withTabs, bypassEnvCache bool) error {
 
 	// The state dir is shared by every herdr session's server, so the record
 	// of the last pushed title must be kept per session.
-	_, err = ApplyTitle(herdrBin, filepath.Join(stateDir, "last_title."+session), title)
+	_, err = ApplyTitle(sock, filepath.Join(stateDir, "last_title."+session), title)
 	return err
 }
 
@@ -217,9 +217,9 @@ func runFast(mode string, args []string) error {
 		}
 		first = false
 
-		herdrBin := envOr("HERDR_BIN_PATH", "herdr")
+		sock := sessionSocketPath()
 		if sampled {
-			p, c, err := paneProgram(herdrBin, os.Getenv("HERDR_PANE_ID"))
+			p, c, err := paneProgram(sock, os.Getenv("HERDR_PANE_ID"))
 			if err != nil || p == "" {
 				return nil // never guess
 			}
@@ -230,7 +230,7 @@ func runFast(mode string, args []string) error {
 		if name == "" && !tabs.HideShell {
 			return nil
 		}
-		label, ok := tabLabel(herdrBin, tabID)
+		label, ok := tabLabel(sock, tabID)
 		if !ok {
 			return nil
 		}
@@ -241,7 +241,7 @@ func runFast(mode string, args []string) error {
 			return SaveTabStates(statePath, states) // Eligible may record an opt-out
 		}
 		if name != label {
-			renameTab(herdrBin, tabID, name)
+			renameTab(sock, tabID, name)
 		}
 		states[tabID] = TabState{Auto: name, Enabled: true}
 		return SaveTabStates(statePath, states)
