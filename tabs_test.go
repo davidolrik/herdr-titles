@@ -116,6 +116,26 @@ func TestReconcileTabsAgentWithoutTitleFallsBack(t *testing.T) {
 	}
 }
 
+func TestReconcileTabsUnwrapsInterpreter(t *testing.T) {
+	f := newTabsFixture(t)
+	f.cfg.Icons.Enabled = true
+	// The argv shape of a Python console script: argv0 is the interpreter,
+	// the tool actually run is argv[1].
+	f.api.setProcessInfoArgv("w1:p1", "python", []string{
+		"/Volumes/Projects/infra/.venv/bin/python",
+		"/Volumes/Projects/infra/.venv/bin/ansible-playbook",
+		"server-upgrade.yml",
+	})
+	snap := singlePaneSnap("")
+
+	ReconcileTabs(f.api.sockPath, snap, f.cfg, f.states, "")
+
+	want := "w1:t1=\uF5E7 ansible-playbook"
+	if got := f.renames(t); len(got) != 1 || got[0] != want {
+		t.Errorf("renames = %v, want [%s]", got, want)
+	}
+}
+
 func TestReconcileTabsBackgroundMultiPaneUntouched(t *testing.T) {
 	f := newTabsFixture(t)
 	snap := &Snapshot{

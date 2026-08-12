@@ -1,6 +1,6 @@
 id = "davidolrik.titles"
 name = "Herdr Titles"
-version = "0.8.0"
+version = "0.9.0"
 # [[startup]] delivery requires herdr 0.7.5; everything else works on 0.7.1.
 min_herdr_version = "0.7.5"
 description = " Titles that keep up. herdr-titles names your tabs after what's actually running — including your AI agents' live session titles — and composes the window title from workspace, tab, agent-attention counts, and your shell environment via a small HCL template. Instant, self-healing, near-zero CPU. Zero config to start, endlessly tweakable."

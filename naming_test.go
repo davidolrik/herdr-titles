@@ -147,6 +147,35 @@ func TestFormatTabNameTruncation(t *testing.T) {
 	}
 }
 
+func TestUnwrapInterpreter(t *testing.T) {
+	cases := []struct {
+		name string
+		prog string
+		argv []string
+		want string
+	}{
+		{"python console script", "python", []string{"/v/bin/python", "/v/bin/ansible-playbook", "server-upgrade.yml"}, "ansible-playbook"},
+		{"versioned interpreter", "python3.13", []string{"/usr/bin/python3.13", "/usr/local/bin/aws", "s3", "ls"}, "aws"},
+		{"bare REPL stays", "python", []string{"python"}, "python"},
+		{"flags skipped", "python", []string{"python", "-u", "script.py"}, "script.py"},
+		{"-m names the module", "python", []string{"python", "-m", "http.server", "8000"}, "http.server"},
+		{"-c inline code stays", "python", []string{"python", "-c", "print(1)"}, "python"},
+		{"-e inline code stays", "perl", []string{"perl", "-e", "print 1"}, "perl"},
+		{"node script", "node", []string{"/usr/bin/node", "server.js"}, "server.js"},
+		{"ruby script", "ruby", []string{"ruby", "/v/bin/rails", "console"}, "rails"},
+		{"non-interpreter passthrough", "nvim", []string{"nvim", "main.go"}, "nvim"},
+		{"interpreter-prefixed name passthrough", "nodemon", []string{"nodemon", "app.js"}, "nodemon"},
+		{"empty argv passthrough", "python", nil, "python"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := unwrapInterpreter(tc.prog, tc.argv); got != tc.want {
+				t.Errorf("unwrapInterpreter(%q, %v) = %q, want %q", tc.prog, tc.argv, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestFormatAgentTitle(t *testing.T) {
 	cfg := namingConfig()
 	cfg.Icons.Enabled = true

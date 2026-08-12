@@ -84,6 +84,7 @@ func paneProgram(sockPath, paneID string) (prog, cmdline string, err error) {
 		if i := strings.LastIndex(prog, "/"); i >= 0 {
 			prog = prog[i+1:]
 		}
+		prog = unwrapInterpreter(prog, p.Argv)
 		cmdline = p.Cmdline
 		if cmdline == "" {
 			cmdline = strings.Join(p.Argv, " ")

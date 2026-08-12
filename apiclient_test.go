@@ -147,6 +147,20 @@ func (f *fakeAPI) setTab(tabID, label string) {
 	f.tabLabels[tabID] = label
 }
 
+// setProcessInfoArgv registers a process whose argv differs from its argv0 —
+// the interpreter shape (python running a console script).
+func (f *fakeAPI) setProcessInfoArgv(paneID, argv0 string, argv []string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	info, _ := json.Marshal(map[string]any{
+		"foreground_process_group_id": 100,
+		"foreground_processes": []map[string]any{
+			{"pid": 100, "argv0": argv0, "argv": argv, "cmdline": strings.Join(argv, " "), "name": "on-disk-name"},
+		},
+	})
+	f.processInfos[paneID] = info
+}
+
 func (f *fakeAPI) setProcessInfo(paneID, argv0, cmdline string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

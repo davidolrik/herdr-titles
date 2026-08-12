@@ -15,6 +15,7 @@ package main
 import (
 	"regexp"
 	"slices"
+	"strings"
 )
 
 // Substitution is one ordered rewrite applied to the final display string.
@@ -88,6 +89,42 @@ func applyIcon(program, name string, icons *IconsConfig) string {
 	default: // name_and_icon
 		return glyph + " " + name
 	}
+}
+
+// interpreterRe matches script-interpreter process names, with or without a
+// version suffix (python, python3.13, ruby, node, ...). Shells are deliberately
+// excluded: they run scripts too briefly and variedly to be worth unwrapping.
+var interpreterRe = regexp.MustCompile(`^(python|ruby|perl|node|bun|deno)[\d.]*$`)
+
+// unwrapInterpreter resolves the tool a script interpreter is actually
+// running: a Python console script like ansible-playbook has argv0 "python"
+// and the real name in argv[1]. Non-interpreters and bare REPLs pass through.
+// Interpreter flags are skipped; `-m module` names the module; inline code
+// (`-c`/`-e`) keeps the interpreter's own name.
+func unwrapInterpreter(prog string, argv []string) string {
+	if !interpreterRe.MatchString(prog) || len(argv) < 2 {
+		return prog
+	}
+	for i := 1; i < len(argv); i++ {
+		arg := argv[i]
+		switch {
+		case arg == "-m":
+			if i+1 < len(argv) {
+				return argv[i+1]
+			}
+			return prog
+		case arg == "-c" || arg == "-e":
+			return prog
+		case len(arg) > 0 && arg[0] == '-':
+			continue
+		default:
+			if j := strings.LastIndex(arg, "/"); j >= 0 {
+				arg = arg[j+1:]
+			}
+			return arg
+		}
+	}
+	return prog
 }
 
 // FormatTabName computes the tab label for a foreground program. An empty
