@@ -27,6 +27,10 @@ type fakeAPI struct {
 	renames      []string
 	snapshots    int
 	infoReqs     int
+
+	notifications []string // recorded "title|body" per notification.show
+	notifBusy     int      // answer "busy" this many times before showing
+	notifDisabled bool     // always answer "disabled"
 }
 
 func newFakeAPI(t *testing.T) *fakeAPI {
@@ -116,6 +120,22 @@ func (f *fakeAPI) serve() {
 				f.renames = append(f.renames, p.TabID+"="+p.Label)
 				f.tabLabels[p.TabID] = p.Label
 				reply(`{"type":"tab_info"}`)
+			case "notification.show":
+				var p struct {
+					Title string `json:"title"`
+					Body  string `json:"body"`
+				}
+				_ = json.Unmarshal(req.Params, &p)
+				f.notifications = append(f.notifications, p.Title+"|"+p.Body)
+				switch {
+				case f.notifDisabled:
+					reply(`{"type":"notification_show","shown":false,"reason":"disabled"}`)
+				case f.notifBusy > 0:
+					f.notifBusy--
+					reply(`{"type":"notification_show","shown":false,"reason":"busy"}`)
+				default:
+					reply(`{"type":"notification_show","shown":true,"reason":"shown"}`)
+				}
 			case "pane.process_info":
 				var p struct {
 					PaneID string `json:"pane_id"`
@@ -139,6 +159,12 @@ func (f *fakeAPI) recorded() (titleSets, renames []string, snapshots int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]string{}, f.titleSets...), append([]string{}, f.renames...), f.snapshots
+}
+
+func (f *fakeAPI) notified() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string{}, f.notifications...)
 }
 
 func (f *fakeAPI) setTab(tabID, label string) {

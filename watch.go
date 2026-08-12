@@ -26,6 +26,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -242,10 +244,76 @@ func watchLockPath(stateDir, session string) string {
 // CLOEXEC fds release the singleton flock atomically at exec so the new
 // image re-acquires it without a race. If the exec fails (binary gone:
 // uninstall), the daemon simply dies; watchdog hooks stop reviving it once
-// the plugin is unregistered. A var so tests can stub the exec.
+// the plugin is unregistered. A var so tests can stub the exec. The announce
+// marker makes the NEW image toast the handoff — announcing before exec
+// would hold the old daemon alive through the retry loop.
 var restartSelf = func(exePath string) {
-	_ = syscall.Exec(exePath, []string{exePath, "watch", "--detached"}, os.Environ())
+	_ = syscall.Exec(exePath, []string{exePath, "watch", "--detached"}, withAnnounceEnv(os.Environ()))
 	os.Exit(0)
+}
+
+// announceEnvVar marks an exec-handoff so the replacement daemon announces
+// itself; a fresh daemon (startup, watchdog revival) stays silent.
+const announceEnvVar = "HWT_ANNOUNCE_RESTART"
+
+// withAnnounceEnv appends the announce marker to an environment, once.
+func withAnnounceEnv(environ []string) []string {
+	for _, kv := range environ {
+		if strings.HasPrefix(kv, announceEnvVar+"=") {
+			return environ
+		}
+	}
+	return append(environ, announceEnvVar+"=1")
+}
+
+// pluginVersion reads the plugin version from the manifest two levels above
+// the binary (<root>/bin/herdr-titles -> <root>/herdr-plugin.toml). At
+// announce time the installed checkout is already the NEW version — exactly
+// the one worth naming. Empty when unreadable.
+func pluginVersion(exePath string) string {
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(filepath.Dir(exePath)), "herdr-plugin.toml"))
+	if err != nil {
+		return ""
+	}
+	m := regexp.MustCompile(`(?m)^version\s*=\s*"([^"]+)"`).FindSubmatch(data)
+	if m == nil {
+		return ""
+	}
+	return string(m[1])
+}
+
+// announceRestart toasts the daemon handoff via notification.show, retrying
+// while herdr refuses with "busy" (the user is mid-keystroke; toasts deliver
+// on input-idle). "disabled" means toasts are off in the herdr config — never
+// retry that. Transport errors retry too: the server may still be settling
+// after the plugin update. Returns whether the toast was shown.
+func announceRestart(sockPath, body string, interval time.Duration, maxAttempts int) bool {
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(interval)
+		}
+		result, err := apiRequest(sockPath, "notification.show", map[string]string{
+			"title": "herdr-titles",
+			"body":  body,
+		})
+		if err != nil {
+			continue
+		}
+		var status struct {
+			Shown  bool   `json:"shown"`
+			Reason string `json:"reason"`
+		}
+		if json.Unmarshal(result, &status) != nil {
+			return false
+		}
+		if status.Shown {
+			return true
+		}
+		if status.Reason == "disabled" {
+			return false
+		}
+	}
+	return false
 }
 
 // binaryIdentity is the executable's change-detection fingerprint.
@@ -486,6 +554,17 @@ func runWatchDetached() error {
 	}
 	stateDir := pluginStateDir()
 	exePath, _ := os.Executable()
+	if os.Getenv(announceEnvVar) != "" {
+		// This image replaced a running daemon (binary update): toast the
+		// handoff. Unset so a future watchdog respawn stays silent; the
+		// goroutine retries past "busy" while the daemon gets on with its job.
+		os.Unsetenv(announceEnvVar)
+		body := "Daemon restarted onto a new binary"
+		if v := pluginVersion(exePath); v != "" {
+			body = "Updated to " + v + " — daemon restarted"
+		}
+		go announceRestart(sockPath, body, 2*time.Second, 150)
+	}
 	ops := watchOps{
 		full: func() { _ = run("watch.event") },
 		title: func(bypass bool) {

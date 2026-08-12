@@ -475,3 +475,76 @@ func TestWatchDaemonRestartsOnBinaryRemoval(t *testing.T) {
 	close(srv.closeSub)
 	<-done
 }
+
+func TestAnnounceRestartRetriesUntilShown(t *testing.T) {
+	api := newFakeAPI(t)
+	api.mu.Lock()
+	api.notifBusy = 2 // typing: two refusals before the toast lands
+	api.mu.Unlock()
+
+	if !announceRestart(api.sockPath, "Updated to 0.9.0 — daemon restarted", time.Millisecond, 10) {
+		t.Fatal("announceRestart = false, want shown")
+	}
+	got := api.notified()
+	want := "herdr-titles|Updated to 0.9.0 — daemon restarted"
+	if len(got) != 3 || got[2] != want {
+		t.Errorf("notifications = %v, want three ending in %q", got, want)
+	}
+}
+
+func TestAnnounceRestartStopsWhenDisabled(t *testing.T) {
+	api := newFakeAPI(t)
+	api.mu.Lock()
+	api.notifDisabled = true // toasts off in herdr config: never retry
+	api.mu.Unlock()
+
+	if announceRestart(api.sockPath, "body", time.Millisecond, 10) {
+		t.Fatal("announceRestart = true against disabled toasts")
+	}
+	if got := api.notified(); len(got) != 1 {
+		t.Errorf("notifications = %v, want exactly one attempt", got)
+	}
+}
+
+func TestAnnounceRestartGivesUpAfterMaxAttempts(t *testing.T) {
+	api := newFakeAPI(t)
+	api.mu.Lock()
+	api.notifBusy = 100
+	api.mu.Unlock()
+
+	if announceRestart(api.sockPath, "body", time.Millisecond, 3) {
+		t.Fatal("announceRestart = true, want give-up")
+	}
+	if got := api.notified(); len(got) != 3 {
+		t.Errorf("notifications = %v, want exactly three attempts", got)
+	}
+}
+
+func TestPluginVersion(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "bin"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "id = \"davidolrik.titles\"\nversion = \"0.9.0\"\n"
+	if err := os.WriteFile(filepath.Join(root, "herdr-plugin.toml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := pluginVersion(filepath.Join(root, "bin", "herdr-titles")); got != "0.9.0" {
+		t.Errorf("pluginVersion = %q, want 0.9.0", got)
+	}
+	if got := pluginVersion(filepath.Join(t.TempDir(), "bin", "herdr-titles")); got != "" {
+		t.Errorf("pluginVersion without manifest = %q, want empty", got)
+	}
+}
+
+func TestWithAnnounceEnv(t *testing.T) {
+	env := withAnnounceEnv([]string{"HOME=/x"})
+	if len(env) != 2 || env[1] != announceEnvVar+"=1" {
+		t.Errorf("env = %v, want marker appended", env)
+	}
+	// Idempotent: a marker already present is not duplicated.
+	if again := withAnnounceEnv(env); len(again) != 2 {
+		t.Errorf("marker duplicated: %v", again)
+	}
+}
