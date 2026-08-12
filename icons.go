@@ -19,7 +19,7 @@ func init() {
 		programs []string
 	}{
 		{"\uE73C", []string{"Python", "ipython", "ipython3", "pip", "pip3", "python", "python3"}}, // U+E73C
-		{"\uFCD2", []string{"R"}}, // U+FCD2
+		{"\U000F07D4", []string{"R"}},                                           // U+F07D4 nf-md-language_r
 		{"\U000F06A9", []string{"aider", "claude", "codex", "pi", "gemini"}},    // U+F06A9
 		{"\U000F06A9", []string{"cursor", "cursor-agent", "devin", "cline"}},    // U+F06A9
 		{"\U000F06A9", []string{"agy", "antigravity", "omp", "mastracode"}},     // U+F06A9
@@ -27,7 +27,7 @@ func init() {
 		{"\U000F06A9", []string{"kiro", "kiro-cli", "grok", "hermes", "kilo"}},  // U+F06A9
 		{"\U000F06A9", []string{"qodercli"}},                                    // U+F06A9
 		{"\uF120", []string{"alacritty", "gnome-terminal", "iterm2"}},           // U+F120
-		{"\uF5E7", []string{"ansible", "ansible-playbook"}},                     // U+F5E7
+		{"\U000F109A", []string{"ansible", "ansible-playbook"}},                 // U+F109A nf-md-ansible
 		{"\uE760", []string{"ant"}},                                             // U+E760
 		{"\uF0AC", []string{"apache2", "httpd", "nginx"}},                       // U+F0AC
 		{"\uE77D", []string{"apt", "dpkg", "nala"}},                             // U+E77D
@@ -116,7 +116,7 @@ func init() {
 		{"\uF132", []string{"sudo"}},                                            // U+F132
 		{"\uE755", []string{"swift"}},                                           // U+E755
 		{"\uF085", []string{"systemctl"}},                                       // U+F085
-		{"\uFCBD", []string{"terraform"}},                                       // U+FCBD
+		{"\U000F1062", []string{"terraform"}},                                   // U+F1062 nf-md-terraform
 		{"\uEBE2", []string{"tickrs"}},                                          // U+EBE2
 		{"\U000F06B0", []string{"topgrade"}},                                    // U+F06B0
 		{"\uE77E", []string{"travis"}},                                          // U+E77E
@@ -126,7 +126,7 @@ func init() {
 		{"\uF2B8", []string{"vagrant"}},                                         // U+F2B8
 		{"\uE72A", []string{"virtualbox"}},                                      // U+E72A
 		{"\uE70C", []string{"visualstudio"}},                                    // U+E70C
-		{"\uFD42", []string{"vue"}},                                             // U+FD42
+		{"\U000F0844", []string{"vue"}},                                         // U+F0844 nf-md-vuejs
 		{"\uE770", []string{"webpack"}},                                         // U+E770
 		{"\U000F0B79", []string{"weechat"}},                                     // U+F0B79
 		{"\uEB39", []string{"yazi"}},                                            // U+EB39

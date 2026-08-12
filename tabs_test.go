@@ -130,7 +130,7 @@ func TestReconcileTabsUnwrapsInterpreter(t *testing.T) {
 
 	ReconcileTabs(f.api.sockPath, snap, f.cfg, f.states, "")
 
-	want := "w1:t1=\uF5E7 ansible-playbook"
+	want := "w1:t1=\U000F109A ansible-playbook"
 	if got := f.renames(t); len(got) != 1 || got[0] != want {
 		t.Errorf("renames = %v, want [%s]", got, want)
 	}
