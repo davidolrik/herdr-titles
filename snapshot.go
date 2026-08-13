@@ -28,6 +28,7 @@ type Pane struct {
 	PaneID  string
 	TabID   string
 	Focused bool
+	Title   string // terminal_title_stripped: the pane's terminal title
 }
 
 // Snapshot is the slice of `herdr api snapshot` the plugin cares about.
@@ -59,9 +60,10 @@ func decodeSnapshot(data []byte) (*Snapshot, error) {
 				Focused     bool   `json:"focused"`
 			} `json:"tabs"`
 			Panes []struct {
-				PaneID  string `json:"pane_id"`
-				TabID   string `json:"tab_id"`
-				Focused bool   `json:"focused"`
+				PaneID        string `json:"pane_id"`
+				TabID         string `json:"tab_id"`
+				Focused       bool   `json:"focused"`
+				TitleStripped string `json:"terminal_title_stripped"`
 			} `json:"panes"`
 			Agents []struct {
 				AgentStatus   string `json:"agent_status"`
@@ -99,7 +101,9 @@ func decodeSnapshot(data []byte) (*Snapshot, error) {
 		})
 	}
 	for _, p := range raw.Panes {
-		snap.Panes = append(snap.Panes, Pane{PaneID: p.PaneID, TabID: p.TabID, Focused: p.Focused})
+		snap.Panes = append(snap.Panes, Pane{
+			PaneID: p.PaneID, TabID: p.TabID, Focused: p.Focused, Title: p.TitleStripped,
+		})
 	}
 	for _, a := range raw.Agents {
 		snap.Agents = append(snap.Agents, Agent{

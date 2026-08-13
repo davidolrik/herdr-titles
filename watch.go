@@ -92,9 +92,9 @@ var watchSubscriptions = []string{
 }
 
 // classifyEvent maps one event line to a trigger, tracking last stripped
-// titles per pane so only real changes fire. Non-agent pane title changes
-// are ignored — the shell hooks own those panes. Unknown/garbage lines are
-// nil.
+// titles per pane so only real changes fire. A title cleared to "" is
+// recorded but fires nothing — the targeted rename path has no name to
+// apply. Unknown/garbage lines are nil.
 func classifyEvent(line []byte, lastTitles map[string]string) *trigger {
 	var ev struct {
 		Event string `json:"event"`
@@ -113,13 +113,16 @@ func classifyEvent(line []byte, lastTitles map[string]string) *trigger {
 	switch ev.Event {
 	case "pane_updated":
 		p := ev.Data.Pane
-		if p == nil || p.Agent == "" {
+		if p == nil {
 			return nil
 		}
 		if lastTitles[p.PaneID] == p.Title {
 			return nil
 		}
 		lastTitles[p.PaneID] = p.Title
+		if p.Title == "" {
+			return nil
+		}
 		return &trigger{kind: triggerRename, pane: paneEvent{
 			PaneID: p.PaneID, TabID: p.TabID, Agent: p.Agent, Title: p.Title,
 		}}
@@ -572,7 +575,7 @@ func runWatchDetached() error {
 		},
 		rename: func(p paneEvent) {
 			_ = withLock(stateDir, session, func() error {
-				return RenameTabForAgentTitle(
+				return RenameTabForTitle(
 					sockPath,
 					tabStatePath(stateDir, session),
 					p.TabID, p.Agent, p.Title, cfg.Tabs)

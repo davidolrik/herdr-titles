@@ -31,8 +31,17 @@ func TestClassifyEvent(t *testing.T) {
 	if tr := classifyEvent([]byte(paneEv("claude", "Second")), last); tr == nil || tr.kind != triggerRename {
 		t.Errorf("changed title => %+v, want rename", tr)
 	}
+	if tr := classifyEvent([]byte(paneEv("", "shell title")), last); tr == nil || tr.kind != triggerRename || tr.pane.Agent != "" {
+		t.Errorf("non-agent title => %+v, want rename trigger with empty agent", tr)
+	}
 	if tr := classifyEvent([]byte(paneEv("", "shell title")), last); tr != nil {
-		t.Errorf("non-agent pane => %+v, want nil (hooks own shell panes)", tr)
+		t.Errorf("unchanged non-agent title => %+v, want nil", tr)
+	}
+	if tr := classifyEvent([]byte(paneEv("", "")), last); tr != nil {
+		t.Errorf("cleared title => %+v, want nil (no name to apply)", tr)
+	}
+	if tr := classifyEvent([]byte(paneEv("", "shell title")), last); tr == nil || tr.kind != triggerRename {
+		t.Errorf("title set again after clearing => %+v, want rename", tr)
 	}
 	if tr := classifyEvent([]byte(`{"event":"pane_agent_status_changed","data":{"type":"pane_agent_status_changed"}}`), last); tr == nil || tr.kind != triggerTitle {
 		t.Errorf("status change => %+v, want title-only", tr)

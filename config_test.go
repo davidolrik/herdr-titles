@@ -238,6 +238,30 @@ func TestExampleConfigTabsMatchBuiltInDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadConfigTerminalTitles(t *testing.T) {
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.hcl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Tabs.TerminalTitles {
+		t.Error("TerminalTitles default = true, want false")
+	}
+
+	path := writeConfig(t, `
+template = "x"
+tabs {
+  terminal_titles = true
+}
+`)
+	cfg, err = LoadConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Tabs.TerminalTitles {
+		t.Error("terminal_titles = true not honored")
+	}
+}
+
 func TestLoadConfigWatchKnobs(t *testing.T) {
 	t.Setenv("HOME", "/home/probe")
 	// Defaults: watching titles on, no env files watched.
