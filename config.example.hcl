@@ -113,6 +113,11 @@ tabs {
   agent_titles        = true
   agent_title_max_len = 40
 
+  # Prefer using the terminal title (set by your shell or by programs like nvim)
+  # for non-agent panes rather than the foreground process name. Truncated to
+  # max_name_len with no further substitutions.
+  terminal_titles = false
+
   # Run the per-session watch daemon. It follows agent title changes (e.g.
   # Claude's /rename) the moment they happen and handles all herdr events
   # over the socket stream; the manifest's remaining event hooks only revive

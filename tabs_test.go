@@ -92,9 +92,13 @@ func TestReconcileTabsAgentTitle(t *testing.T) {
 func TestReconcileTabsAgentTitleDisabledFallsBack(t *testing.T) {
 	f := newTabsFixture(t)
 	f.cfg.AgentTitles = false
+	f.cfg.TerminalTitles = true
 	f.api.setProcessInfo("w1:p1", "claude", "claude --resume")
 	snap := singlePaneSnap("")
 	snap.Agents = []Agent{{PaneID: "w1:p1", Kind: "claude", Status: "working", Title: "Fix flaky test"}}
+	// The agent's session title doubles as the pane's terminal title; the
+	// terminal-title path must not resurrect it when agent_titles is off.
+	snap.Panes[0].Title = "Fix flaky test"
 
 	ReconcileTabs(f.api.sockPath, snap, f.cfg, f.states, "")
 
@@ -133,6 +137,54 @@ func TestReconcileTabsUnwrapsInterpreter(t *testing.T) {
 	want := "w1:t1=\U000F109A ansible-playbook"
 	if got := f.renames(t); len(got) != 1 || got[0] != want {
 		t.Errorf("renames = %v, want [%s]", got, want)
+	}
+}
+
+func TestReconcileTabsTerminalTitle(t *testing.T) {
+	f := newTabsFixture(t)
+	f.cfg.TerminalTitles = true
+	snap := singlePaneSnap("1")
+	snap.Panes[0].Title = "make -j all"
+
+	ReconcileTabs(f.api.sockPath, snap, f.cfg, f.states, "")
+
+	if got := f.renames(t); len(got) != 1 || got[0] != "w1:t1=make -j all" {
+		t.Errorf("renames = %v, want [w1:t1=make -j all]", got)
+	}
+	// The terminal-title path must not consult process-info at all.
+	f.api.mu.Lock()
+	infoReqs := f.api.infoReqs
+	f.api.mu.Unlock()
+	if infoReqs != 0 {
+		t.Errorf("terminal-title path made %d process-info requests", infoReqs)
+	}
+}
+
+func TestReconcileTabsAgentTitleBeatsTerminalTitle(t *testing.T) {
+	f := newTabsFixture(t)
+	f.cfg.TerminalTitles = true
+	snap := singlePaneSnap("")
+	snap.Agents = []Agent{{PaneID: "w1:p1", Kind: "claude", Status: "working", Title: "Fix flaky test"}}
+	snap.Panes[0].Title = "claude"
+
+	ReconcileTabs(f.api.sockPath, snap, f.cfg, f.states, "")
+
+	if got := f.renames(t); len(got) != 1 || got[0] != "w1:t1=Fix flaky test" {
+		t.Errorf("renames = %v, want the agent title", got)
+	}
+}
+
+func TestReconcileTabsTerminalTitleDisabledFallsBack(t *testing.T) {
+	f := newTabsFixture(t)
+	f.cfg.TerminalTitles = false
+	f.api.setProcessInfo("w1:p1", "nvim", "nvim")
+	snap := singlePaneSnap("")
+	snap.Panes[0].Title = "make -j all"
+
+	ReconcileTabs(f.api.sockPath, snap, f.cfg, f.states, "")
+
+	if got := f.renames(t); len(got) != 1 || got[0] != "w1:t1=nvim" {
+		t.Errorf("renames = %v, want [w1:t1=nvim]", got)
 	}
 }
 
@@ -243,7 +295,7 @@ func TestReconcileTabsPrunesClosedTabs(t *testing.T) {
 	}
 }
 
-func TestRenameTabForAgentTitle(t *testing.T) {
+func TestRenameTabForTitleAgent(t *testing.T) {
 	api := newFakeAPI(t)
 	statePath := filepath.Join(t.TempDir(), "tabstate.test.json")
 	cfg := DefaultTabsConfig()
@@ -254,7 +306,7 @@ func TestRenameTabForAgentTitle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := RenameTabForAgentTitle(api.sockPath, statePath, "w1:t1", "claude", "New title", cfg); err != nil {
+	if err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "claude", "New title", cfg); err != nil {
 		t.Fatal(err)
 	}
 	_, renames, _ := api.recorded()
@@ -270,14 +322,50 @@ func TestRenameTabForAgentTitle(t *testing.T) {
 	if err := SaveTabStates(statePath, TabStates{"w1:t1": {Enabled: false}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := RenameTabForAgentTitle(api.sockPath, statePath, "w1:t1", "claude", "Another", cfg); err != nil {
+	if err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "claude", "Another", cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := RenameTabForAgentTitle(api.sockPath, statePath, "w1:t1", "claude", "", cfg); err != nil {
+	if err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "claude", "", cfg); err != nil {
 		t.Fatal(err)
 	}
 	_, renames, _ = api.recorded()
 	if len(renames) != 1 {
 		t.Errorf("opted-out/empty-title caused renames: %v", renames)
+	}
+}
+
+func TestRenameTabForTitlePlainPane(t *testing.T) {
+	api := newFakeAPI(t)
+	statePath := filepath.Join(t.TempDir(), "tabstate.test.json")
+	cfg := DefaultTabsConfig()
+	cfg.ShellName = "zsh"
+	cfg.MaxNameLen = 10
+	cfg.TerminalTitles = true
+	// Icons must not apply to plain pane titles even when enabled.
+	cfg.Icons.Enabled = true
+	api.setTab("w1:t1", "zsh")
+	if err := SaveTabStates(statePath, TabStates{"w1:t1": {Auto: "zsh", Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "", "make -j all target", cfg); err != nil {
+		t.Fatal(err)
+	}
+	_, renames, _ := api.recorded()
+	if len(renames) != 1 || renames[0] != "w1:t1=make -j al" {
+		t.Fatalf("renames = %v, want [w1:t1=make -j al] (truncated at max_name_len)", renames)
+	}
+	if st := LoadTabStates(statePath)["w1:t1"]; st.Auto != "make -j al" || !st.Enabled {
+		t.Errorf("state = %+v, want owned pane title", st)
+	}
+
+	// terminal_titles = false gates the plain-pane path but not the agent path.
+	cfg.TerminalTitles = false
+	if err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "", "other title", cfg); err != nil {
+		t.Fatal(err)
+	}
+	_, renames, _ = api.recorded()
+	if len(renames) != 1 {
+		t.Errorf("terminal_titles=false still renamed: %v", renames)
 	}
 }

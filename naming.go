@@ -48,6 +48,10 @@ type TabsConfig struct {
 	Substitutions    []Substitution
 	AgentTitles      bool
 	AgentTitleMaxLen int
+	// TerminalTitles names a non-agent tab after its pane's terminal title
+	// (terminal_title_stripped) when one is set, in preference to the
+	// foreground program name.
+	TerminalTitles bool
 	// WatchTitles enables the per-session daemon that follows agent title
 	// changes (Claude /rename etc.) the moment they happen.
 	WatchTitles bool
@@ -187,6 +191,13 @@ func FormatAgentTitle(agentKind, title string, cfg *TabsConfig) string {
 	return truncateRunes(name, cfg.AgentTitleMaxLen)
 }
 
+// FormatTerminalTitle names a tab after its pane's terminal title. The shell
+// (or program) that set the title is presumed to have produced the desired
+// text already, so no substitutions and no icon — the program is unknown here.
+func FormatTerminalTitle(title string, cfg *TabsConfig) string {
+	return truncateRunes(title, cfg.MaxNameLen)
+}
+
 // DefaultTabsConfig mirrors the ported defaults of naming.sh/icons.sh. The
 // agent entries in NameOnlyPrograms are the executable names herdr 0.8.0
 // itself detects as interactive agents, plus aider.
@@ -211,6 +222,7 @@ func DefaultTabsConfig() *TabsConfig {
 		Aliases:          map[string]string{},
 		AgentTitles:      true,
 		AgentTitleMaxLen: 40,
+		TerminalTitles:   false,
 		WatchTitles:      true,
 		Icons: IconsConfig{
 			Enabled:  false,

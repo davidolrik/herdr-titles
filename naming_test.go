@@ -147,6 +147,17 @@ func TestFormatTabNameTruncation(t *testing.T) {
 	}
 }
 
+func TestFormatTerminalTitle(t *testing.T) {
+	cfg := namingConfig()
+	cfg.MaxNameLen = 10
+	// No substitutions, no icon: the title is used verbatim, only truncated.
+	cfg.Substitutions = []Substitution{{Pattern: regexp.MustCompile("make"), Replace: "MAKE"}}
+	cfg.Icons.Enabled = true
+	if got := FormatTerminalTitle("make -j all target", cfg); got != "make -j al" {
+		t.Errorf("FormatTerminalTitle = %q, want raw title truncated to 10 runes", got)
+	}
+}
+
 func TestUnwrapInterpreter(t *testing.T) {
 	cases := []struct {
 		name string

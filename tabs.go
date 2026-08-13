@@ -119,6 +119,16 @@ func renameTab(sockPath, tabID, label string) {
 	_, _ = apiRequest(sockPath, "tab.rename", map[string]string{"tab_id": tabID, "label": label})
 }
 
+// paneHasAgent reports whether a pane hosts a recognized agent.
+func paneHasAgent(paneID string, agents []Agent) bool {
+	for _, a := range agents {
+		if a.PaneID == paneID {
+			return true
+		}
+	}
+	return false
+}
+
 // computeTabName determines the label a tab should carry, or ok=false when no
 // name is computable (no active pane, process-info blip) — in which case the
 // tab must be left alone, never fall through to a shell name.
@@ -134,6 +144,18 @@ func computeTabName(sockPath string, tab Tab, snap *Snapshot, cfg *TabsConfig) (
 			}
 		}
 	}
+	// A pane's own terminal title wins over the process-derived name (and
+	// skips the process-info subprocess). Agent panes are excluded: their
+	// terminal title IS the agent session title, which agent_titles governs.
+	// The shell-hook fast path stays on process names: at preexec the stored
+	// title is still the previous one.
+	if cfg.TerminalTitles && !paneHasAgent(paneID, snap.Agents) {
+		for _, p := range snap.Panes {
+			if p.PaneID == paneID && p.Title != "" {
+				return FormatTerminalTitle(p.Title, cfg), true
+			}
+		}
+	}
 	prog, cmdline, err := paneProgram(sockPath, paneID)
 	if err != nil || prog == "" {
 		return "", false
@@ -141,15 +163,28 @@ func computeTabName(sockPath string, tab Tab, snap *Snapshot, cfg *TabsConfig) (
 	return FormatTabName(prog, cmdline, cfg), true
 }
 
-// RenameTabForAgentTitle applies an agent's session title to its tab — the
-// daemon's targeted path for pane.updated events, which carry the new title
-// in the payload, so no process-info subprocess is needed. The caller holds
-// the per-session lock. An empty title or an opted-out tab is a no-op.
-func RenameTabForAgentTitle(sockPath, statePath, tabID, agentKind, title string, cfg *TabsConfig) error {
-	if !cfg.Enabled || !cfg.AgentTitles || title == "" {
+// RenameTabForTitle applies a pane's terminal title to its tab — the daemon's
+// targeted path for pane.updated events, which carry the new title in the
+// payload, so no process-info subprocess is needed. An empty agentKind means
+// a plain pane (shell/program title); otherwise the title is an agent session
+// title. The caller holds the per-session lock. An empty title or an
+// opted-out tab is a no-op.
+func RenameTabForTitle(sockPath, statePath, tabID, agentKind, title string, cfg *TabsConfig) error {
+	if !cfg.Enabled || title == "" {
 		return nil
 	}
-	name := FormatAgentTitle(agentKind, title, cfg)
+	var name string
+	if agentKind == "" {
+		if !cfg.TerminalTitles {
+			return nil
+		}
+		name = FormatTerminalTitle(title, cfg)
+	} else {
+		if !cfg.AgentTitles {
+			return nil
+		}
+		name = FormatAgentTitle(agentKind, title, cfg)
+	}
 	label, ok := tabLabel(sockPath, tabID)
 	if !ok {
 		return nil

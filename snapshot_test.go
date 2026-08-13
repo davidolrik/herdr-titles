@@ -50,6 +50,15 @@ func TestDecodeSnapshotFixture(t *testing.T) {
 	if titled == 0 {
 		t.Error("no agent carried a session title")
 	}
+	paneTitled := 0
+	for _, p := range snap.Panes {
+		if p.Title != "" {
+			paneTitled++
+		}
+	}
+	if paneTitled == 0 {
+		t.Error("no pane carried a terminal title")
+	}
 }
 
 func TestDecodeSnapshotInvalid(t *testing.T) {
