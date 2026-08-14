@@ -157,14 +157,23 @@ func newFakeEventServer(t *testing.T, pingOK bool) *fakeEventServer {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
+	return newFakeEventServerAt(t, filepath.Join(dir, "herdr.sock"), pingOK)
+}
+
+// newFakeEventServerAt binds at an explicit socket path — herdr reuses the
+// same sessions/<name>/herdr.sock across session restarts, so lifecycle
+// tests need a second server at the first one's address.
+func newFakeEventServerAt(t *testing.T, sockPath string, pingOK bool) *fakeEventServer {
+	t.Helper()
 	s := &fakeEventServer{
 		t:        t,
-		sockPath: filepath.Join(dir, "herdr.sock"),
+		sockPath: sockPath,
 		subGot:   make(chan string, 1),
 		events:   make(chan string, 16),
 		closeSub: make(chan struct{}),
 		pingOK:   pingOK,
 	}
+	var err error
 	s.ln, err = net.Listen("unix", s.sockPath)
 	if err != nil {
 		t.Fatal(err)
@@ -347,7 +356,74 @@ func TestWatchDaemonPingKeepsAliveThenDeadExits(t *testing.T) {
 	}
 }
 
+func TestWatchDaemonStopsWithSessionAndRestarts(t *testing.T) {
+	// One session lifecycle end to end: stopping the session's server must
+	// take the daemon down with it (releasing the singleton flock), and a
+	// fresh daemon for the restarted session — same socket path, same state
+	// dir — must acquire the lock and subscribe.
+	srv1 := newFakeEventServer(t, true)
+	stateDir := t.TempDir()
+
+	done1 := make(chan error, 1)
+	go func() {
+		done1 <- watchDaemon(srv1.sockPath, stateDir, "wtest", nil, (&opsRecorder{}).ops(), testTimings())
+	}()
+	<-srv1.subGot
+
+	// Session stops: the server and its connections go away.
+	srv1.ln.Close()
+	close(srv1.closeSub)
+	select {
+	case <-done1:
+	case <-time.After(2 * time.Second):
+		t.Fatal("daemon survived its session's stop")
+	}
+	if daemonAlive(stateDir, "wtest") {
+		t.Fatal("exited daemon still holds the liveness lock")
+	}
+
+	// Session starts again at the same socket path.
+	srv2 := newFakeEventServerAt(t, srv1.sockPath, true)
+	done2 := make(chan error, 1)
+	go func() {
+		done2 <- watchDaemon(srv2.sockPath, stateDir, "wtest", nil, (&opsRecorder{}).ops(), testTimings())
+	}()
+	select {
+	case <-srv2.subGot:
+	case <-time.After(2 * time.Second):
+		t.Fatal("restarted session did not get a fresh daemon subscription")
+	}
+	close(srv2.closeSub)
+	if err := <-done2; err != nil {
+		t.Fatalf("second daemon exit error: %v", err)
+	}
+}
+
 var _ = json.Marshal // placate imports during TDD scaffolding
+
+func TestWatchParentSpawnsForDefaultSession(t *testing.T) {
+	// The default (unnamed) session sets HERDR_SOCKET_PATH but not
+	// HERDR_SESSION, and the parent must still proceed. An invalid config
+	// file makes it stop with a parse error right after the env gate —
+	// proof the gate passed, without actually daemonizing.
+	configDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configDir, "config.hcl"), []byte("not hcl {{{"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", configDir)
+	t.Setenv("HERDR_SOCKET_PATH", "/nonexistent.sock")
+	t.Setenv("HERDR_SESSION", "")
+
+	if err := runWatchParent(); err == nil {
+		t.Fatal("parent bailed at the env gate for the default session")
+	}
+
+	// Without a server socket there is nothing to watch: the gate must hold.
+	t.Setenv("HERDR_SOCKET_PATH", "")
+	if err := runWatchParent(); err != nil {
+		t.Fatalf("parent did not gate on missing socket: %v", err)
+	}
+}
 
 func TestDaemonAliveAndWatchdog(t *testing.T) {
 	stateDir := t.TempDir()

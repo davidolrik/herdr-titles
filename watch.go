@@ -516,7 +516,7 @@ func joinComma(parts []string) string {
 // runWatchParent is what herdr's [[startup]] spawns: gate on environment and
 // config, then hand off to a detached daemon so herdr's wait() returns.
 func runWatchParent() error {
-	if os.Getenv("HERDR_SOCKET_PATH") == "" || os.Getenv("HERDR_SESSION") == "" {
+	if os.Getenv("HERDR_SOCKET_PATH") == "" {
 		return nil // not spawned by a herdr server
 	}
 	cfg, err := LoadConfig(filepath.Join(pluginConfigDir(), "config.hcl"))
