@@ -131,6 +131,35 @@ func TestClassifyEventPrunesClosedPanes(t *testing.T) {
 	}
 }
 
+func TestClassifyStateSeed(t *testing.T) {
+	st := newClassifyState()
+	st.seed(&Snapshot{
+		Panes: []Pane{
+			{PaneID: "w1:p1", TabID: "w1:t1"},
+			{PaneID: "w1:p2", TabID: "w1:t1"},
+		},
+		TabFocus: map[string]string{"w1:t1": "w1:p1"},
+	})
+	paneEv := func(pane, title string) string {
+		return fmt.Sprintf(
+			`{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":%q,"tab_id":"w1:t1","agent":"","terminal_title_stripped":%q}}}`,
+			pane, title)
+	}
+
+	if tr := classifyEvent([]byte(paneEv("w1:p2", "background")), st, true); tr != nil {
+		t.Errorf("seeded focus did not gate the non-focused pane: %+v", tr)
+	}
+	if tr := classifyEvent([]byte(paneEv("w1:p1", "focused")), st, true); tr == nil || tr.kind != triggerRename {
+		t.Errorf("seeded focused pane => %+v, want rename", tr)
+	}
+
+	focusEv := `{"event":"pane_focused","data":{"type":"pane_focused","pane_id":"w1:p2","workspace_id":"w1"}}`
+	classifyEvent([]byte(focusEv), st, true)
+	if tr := classifyEvent([]byte(paneEv("w1:p2", "background")), st, true); tr == nil || tr.kind != triggerRename {
+		t.Errorf("focus switch via seeded paneTab => %+v, want rename", tr)
+	}
+}
+
 // Closing a tab or workspace emits no per-pane events, so the tab- and
 // workspace-level events must prune everything they owned.
 func TestClassifyEventPrunesClosedTabsAndWorkspaces(t *testing.T) {
@@ -382,7 +411,10 @@ func TestWatchDaemonLoop(t *testing.T) {
 
 	select {
 	case sub := <-srv.subGot:
-		for _, want := range []string{"pane.updated", "tab.focused", "pane.agent_detected", "layout.updated"} {
+		for _, want := range []string{
+			"pane.updated", "tab.focused", "pane.agent_detected",
+			"layout.updated", "tab.closed", "workspace.closed",
+		} {
 			if !strings.Contains(sub, want) {
 				t.Errorf("subscribe payload missing %s: %s", want, sub)
 			}
