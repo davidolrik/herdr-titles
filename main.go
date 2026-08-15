@@ -193,8 +193,10 @@ func runFast(mode string, args []string) error {
 			return nil
 		}
 		return withLock(stateDir, session, func() error {
-			return RenameTabForTitle(sock, tabStatePath(stateDir, session),
+			// No need to escalate here, the next hook event will retry.
+			_, err := RenameTabForTitle(sock, tabStatePath(stateDir, session),
 				tabID, paneID, agentKind, title, true, tabs)
+			return err
 		})
 	}
 

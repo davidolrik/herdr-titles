@@ -58,9 +58,10 @@ type trigger struct {
 }
 
 type watchOps struct {
-	full   func()
-	title  func(bypassEnvCache bool)
-	rename func(paneEvent)
+	full  func()
+	title func(bypassEnvCache bool)
+	// rename returns true if the caller needs to escalate to a full pass
+	rename func(paneEvent) bool
 }
 
 type watchTimings struct {
@@ -300,8 +301,10 @@ func runScheduler(triggers <-chan trigger, ops watchOps, timings watchTimings, s
 		if pendingFull {
 			if wait := timings.FullFloor - time.Since(lastFull); wait > 0 {
 				// Floored: run the cheap work now, keep the full pending.
+				// A transient error here doesn't need any extra handling,
+				// the pending full already covers it.
 				for _, p := range renames {
-					ops.rename(p)
+					_ = ops.rename(p)
 				}
 				renames = map[string]paneEvent{}
 				if pendingTitle {
@@ -318,12 +321,17 @@ func runScheduler(triggers <-chan trigger, ops watchOps, timings watchTimings, s
 			return
 		}
 		for _, p := range renames {
-			ops.rename(p)
+			if ops.rename(p) {
+				pendingFull = true
+			}
 		}
 		renames = map[string]paneEvent{}
 		if pendingTitle {
 			ops.title(pendingBypass)
 			pendingTitle, pendingBypass = false, false
+		}
+		if pendingFull {
+			arm(timings.Debounce)
 		}
 	}
 
@@ -810,13 +818,17 @@ func runWatchDetached() error {
 		title: func(bypass bool) {
 			_ = runTitleOnly("watch.title", bypass)
 		},
-		rename: func(p paneEvent) {
+		rename: func(p paneEvent) bool {
+			retryFull := false
 			_ = withLock(stateDir, session, func() error {
-				return RenameTabForTitle(
+				var err error
+				retryFull, err = RenameTabForTitle(
 					sockPath,
 					tabStatePath(stateDir, session),
 					p.TabID, p.PaneID, p.Agent, p.Title, p.FocusKnown, cfg.Tabs)
+				return err
 			})
+			return retryFull
 		},
 	}
 	return watchDaemonAt(sockPath, stateDir, session, exePath, configPath, cfg.Tabs.TerminalTitles, cfg.EnvWatchFiles, ops, defaultWatchTimings())
