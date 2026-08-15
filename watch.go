@@ -170,7 +170,6 @@ func classifyEvent(line []byte, st *classifyState, agentTitles, terminalTitles b
 			TabID          string `json:"tab_id"`
 			WorkspaceID    string `json:"workspace_id"`
 			PreviousPaneID string `json:"previous_pane_id"`
-			PreviousTabID  string `json:"previous_tab_id"`
 			Pane           *struct {
 				PaneID  string `json:"pane_id"`
 				TabID   string `json:"tab_id"`
@@ -218,16 +217,21 @@ func classifyEvent(line []byte, st *classifyState, agentTitles, terminalTitles b
 	case "pane_created", "pane_moved":
 		p := ev.Data.Pane
 		if prev := ev.Data.PreviousPaneID; prev != "" && (p == nil || p.PaneID != prev) {
-			st.prunePane(prev) // pane moved
+			st.prunePane(prev) // cross-workspace move: the pane was re-identified
 		}
 		if p != nil {
 			st.paneTab[p.PaneID] = p.TabID
+			// Whatever tab held this pane as its remembered focus no longer
+			// does. Scan instead of trusting previous_tab_id to handle
+			// same-workspace moves on servers that omit this field.
+			for tabID, focused := range st.tabFocus {
+				if focused == p.PaneID && tabID != p.TabID {
+					delete(st.tabFocus, tabID)
+				}
+			}
 			if p.Focused {
 				// A newly split pane can become focused immediately
 				st.tabFocus[p.TabID] = p.PaneID
-			}
-			if prevTab := ev.Data.PreviousTabID; prevTab != "" && prevTab != p.TabID && st.tabFocus[prevTab] == p.PaneID {
-				delete(st.tabFocus, prevTab) // moved out while being the focused pane
 			}
 		}
 		return &trigger{kind: triggerFull}

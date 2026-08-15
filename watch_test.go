@@ -323,6 +323,32 @@ func TestClassifyEventPaneMovedReidentifies(t *testing.T) {
 	}
 }
 
+// A same-workspace move keeps the pane id and may omit previous_tab_id: the
+// old tab's focus entry must still be released, or its remaining panes stay
+// gated forever on servers without layout events.
+func TestClassifyEventPaneMovedSameID(t *testing.T) {
+	st := newClassifyState()
+	layoutEv := `{"event":"layout_updated","data":{"type":"layout_updated","layout":{"tab_id":"w1:t1","focused_pane_id":"w1:p1","panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"}]}}}`
+	movedEv := `{"event":"pane_moved","data":{"type":"pane_moved","pane":{"pane_id":"w1:p1","tab_id":"w1:t2","focused":true,"agent":"","terminal_title_stripped":""},"previous_pane_id":"w1:p1"}}`
+
+	classifyEvent([]byte(layoutEv), st, true, true)
+	if tr := classifyEvent([]byte(movedEv), st, true, true); tr == nil || tr.kind != triggerFull {
+		t.Fatalf("pane moved => %+v, want full", tr)
+	}
+	if _, ok := st.tabFocus["w1:t1"]; ok {
+		t.Error("source tab still focused on the departed pane")
+	}
+	if st.paneTab["w1:p1"] != "w1:t2" || st.tabFocus["w1:t2"] != "w1:p1" {
+		t.Errorf("moved pane not tracked at its new tab: paneTab=%v tabFocus=%v",
+			st.paneTab, st.tabFocus)
+	}
+	// The source tab's survivor is no longer gated.
+	surviving := `{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":"w1:p2","tab_id":"w1:t1","agent":"","terminal_title_stripped":"free"}}}`
+	if tr := classifyEvent([]byte(surviving), st, true, true); tr == nil || tr.kind != triggerRename {
+		t.Errorf("survivor still gated after same-id move: %+v", tr)
+	}
+}
+
 // Closing a tab or workspace emits no per-pane events, so the tab- and
 // workspace-level events must prune everything they owned.
 func TestClassifyEventPrunesClosedTabsAndWorkspaces(t *testing.T) {
