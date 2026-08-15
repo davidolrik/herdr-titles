@@ -525,45 +525,6 @@ func binaryWatcher(exePath string, baseline *binaryIdentity, interval time.Durat
 	}
 }
 
-// reloadSelf re-execs the daemon in place so it re-reads the plugin config.
-// Unlike restartSelf it stays silent — a config edit is the user's own
-// action, not news. A var so tests can stub the exec.
-var reloadSelf = func(exePath string) {
-	_ = syscall.Exec(exePath, []string{exePath, "watch", "--detached"}, os.Environ())
-	os.Exit(0)
-}
-
-// fingerprintConfig reduces the config file to a comparable identity. A
-// missing file is the distinct "absent" state, not an error — running
-// without a config (defaults) is valid, and creating or deleting the file
-// both count as changes.
-func fingerprintConfig(path string) string {
-	info, err := os.Stat(path)
-	if err != nil {
-		return "absent"
-	}
-	return fmt.Sprintf("%d/%d", info.ModTime().UnixNano(), info.Size())
-}
-
-// configWatcher polls the plugin config and re-execs the daemon when it
-// changes. The fresh image re-reads the config (and exits if watch_titles
-// is now off).
-func configWatcher(configPath, exePath, baseline string, interval time.Duration, stop <-chan struct{}) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-stop:
-			return
-		case <-ticker.C:
-			if fingerprintConfig(configPath) != baseline {
-				reloadSelf(exePath)
-				return
-			}
-		}
-	}
-}
-
 // sendTrigger enqueues a trigger without blocking the event stream. On
 // saturation the trigger is dropped: safe for full/title kinds (the caller
 // escalates to a full pass), but a rename is lost, so we need to be able
@@ -580,20 +541,18 @@ func sendTrigger(triggers chan<- trigger, tr trigger, st *classifyState) bool {
 	}
 }
 
-// watchDaemon runs the daemon without binary or config self-restart (tests).
+// watchDaemon runs the daemon without binary self-restart (tests).
 func watchDaemon(sockPath, stateDir, session string, watchFiles []string, ops watchOps, timings watchTimings) error {
-	return watchDaemonAt(sockPath, stateDir, session, "", "", true, true, watchFiles, ops, timings)
+	return watchDaemonAt(sockPath, stateDir, session, "", true, true, watchFiles, ops, timings)
 }
 
 // watchDaemonAt is the detached daemon body: singleton lock, subscribe, then
 // pump events into the scheduler until the stream ends. watchFiles are
 // stat-polled for env changes; binPath (when non-empty) is the daemon's own
 // executable, watched so a plugin update restarts the daemon onto the new
-// binary automatically; configPath (when non-empty, requires binPath) is the
-// plugin config, watched to ensure targeted and full passes are consistent.
-// Returns nil on every orderly exit — a held lock or a dead server are normal,
-// not errors.
-func watchDaemonAt(sockPath, stateDir, session, binPath, configPath string, agentTitles, terminalTitles bool, watchFiles []string, ops watchOps, timings watchTimings) error {
+// binary automatically. Returns nil on every orderly exit — a held lock or
+// a dead server are normal, not errors.
+func watchDaemonAt(sockPath, stateDir, session, binPath string, agentTitles, terminalTitles bool, watchFiles []string, ops watchOps, timings watchTimings) error {
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return err
 	}
@@ -606,15 +565,11 @@ func watchDaemonAt(sockPath, stateDir, session, binPath, configPath string, agen
 		return nil // another daemon is alive; that's the desired state
 	}
 
-	// Fingerprint the binary and config BEFORE subscribing: anything that
-	// changes either after this point — however quickly — is detected.
+	// Fingerprint the binary BEFORE subscribing: anything that replaces it
+	// after this point — however quickly — is detected as a change.
 	var baseline *binaryIdentity
 	if binPath != "" {
 		baseline = fingerprintBinary(binPath)
-	}
-	var cfgBaseline string
-	if configPath != "" {
-		cfgBaseline = fingerprintConfig(configPath)
 	}
 
 	conn, reader, err := subscribeEvents(sockPath,
@@ -652,9 +607,6 @@ func watchDaemonAt(sockPath, stateDir, session, binPath, configPath string, agen
 	}
 	if binPath != "" {
 		go binaryWatcher(binPath, baseline, timings.BinaryPoll, stopStat)
-	}
-	if binPath != "" && configPath != "" {
-		go configWatcher(configPath, binPath, cfgBaseline, timings.BinaryPoll, stopStat)
 	}
 
 	st := newClassifyState()
@@ -836,16 +788,15 @@ func runWatchDetached() error {
 	if sockPath == "" {
 		return nil
 	}
-	configPath := filepath.Join(pluginConfigDir(), "config.hcl")
-	cfg, err := LoadConfig(configPath)
+	cfg, err := LoadConfig(filepath.Join(pluginConfigDir(), "config.hcl"))
 	if err != nil {
 		return err
 	}
 	if !cfg.Tabs.WatchTitles {
-		// Normally runWatchParent gates this, but a config-reload or
-		// binary-update re-exec lands here directly: honoring the toggle
-		// means exiting, releasing the lock; the watchdogs' revival attempts
-		// hit the parent's gate and stay inert until it is re-enabled.
+		// Normally runWatchParent gates this, but a binary-update re-exec
+		// lands here directly: honoring the toggle means exiting, releasing
+		// the lock; the watchdogs' revival attempts hit the parent's gate
+		// and stay inert until it is re-enabled.
 		return nil
 	}
 	stateDir := pluginStateDir()
@@ -879,7 +830,7 @@ func runWatchDetached() error {
 			return retryFull
 		},
 	}
-	return watchDaemonAt(sockPath, stateDir, session, exePath, configPath, cfg.Tabs.AgentTitles, cfg.Tabs.TerminalTitles, cfg.EnvWatchFiles, ops, defaultWatchTimings())
+	return watchDaemonAt(sockPath, stateDir, session, exePath, cfg.Tabs.AgentTitles, cfg.Tabs.TerminalTitles, cfg.EnvWatchFiles, ops, defaultWatchTimings())
 }
 
 // daemonAlive probes the daemon's liveness lock: if we can take it, nobody

@@ -158,14 +158,17 @@ instantly and keeps the manifest down to three tiny watchdog hooks.
 
 It is self-healing by construction: the daemon holds a per-session lock for
 its lifetime, and the watchdog hooks (plus every shell prompt) probe that
-lock and respawn a dead daemon. It also watches its own binary and config,
-and restarts itself when either changes, so installing a plugin update (or
-rebuilding a dev checkout) or changing the config will take effect within
-seconds, no manual restarts needed. Work is debounced and scoped — frequent
-events take cheap title-only or targeted-rename paths with zero subprocess
-spawns, and full reconciles are rate-limited — so steady-state CPU cost is
-near zero. `tabs { watch_titles = false }` disables it; titles then update
-on focus changes only.
+lock and respawn a dead daemon. It also watches its own binary and restarts
+itself when it changes, so installing a plugin update (or rebuilding a dev
+checkout) will take effect within seconds. Work is debounced and scoped —
+frequent events take cheap title-only or targeted-rename paths with zero
+subprocess spawns, and full reconciles are rate-limited— so steady-state CPU
+cost is near zero. `tabs { watch_titles = false }` disables it; titles then
+update on focus changes only.
+
+Note that if the `terminal_titles` option is changed while the daemon is
+running, title changes may be applied inconsistently. Restart the daemon
+after making such changes.
 
 ## Using with Overseer (or any tool that changes your environment)
 
