@@ -129,6 +129,18 @@ func (st *classifyState) pruneTab(tabID string) {
 	}
 }
 
+// prunePane drops all classifier state owned by a stale pane ID, either
+// because the pane closed/exited, or it moved elsewhere.
+func (st *classifyState) prunePane(paneID string) {
+	delete(st.lastTitles, paneID)
+	delete(st.paneTab, paneID)
+	for tabID, focused := range st.tabFocus {
+		if focused == paneID {
+			delete(st.tabFocus, tabID)
+		}
+	}
+}
+
 // seed primes the focus tracking from a snapshot on a best-effort basis.
 func (st *classifyState) seed(snap *Snapshot) {
 	maps.Copy(st.tabFocus, snap.TabFocus)
@@ -149,14 +161,17 @@ func classifyEvent(line []byte, st *classifyState, terminalTitles bool) *trigger
 	var ev struct {
 		Event string `json:"event"`
 		Data  struct {
-			PaneID      string `json:"pane_id"`
-			TabID       string `json:"tab_id"`
-			WorkspaceID string `json:"workspace_id"`
-			Pane        *struct {
-				PaneID string `json:"pane_id"`
-				TabID  string `json:"tab_id"`
-				Agent  string `json:"agent"`
-				Title  string `json:"terminal_title_stripped"`
+			PaneID         string `json:"pane_id"`
+			TabID          string `json:"tab_id"`
+			WorkspaceID    string `json:"workspace_id"`
+			PreviousPaneID string `json:"previous_pane_id"`
+			PreviousTabID  string `json:"previous_tab_id"`
+			Pane           *struct {
+				PaneID  string `json:"pane_id"`
+				TabID   string `json:"tab_id"`
+				Agent   string `json:"agent"`
+				Focused bool   `json:"focused"`
+				Title   string `json:"terminal_title_stripped"`
 			} `json:"pane"`
 			Layout *struct {
 				TabID         string `json:"tab_id"`
@@ -193,15 +208,24 @@ func classifyEvent(line []byte, st *classifyState, terminalTitles bool) *trigger
 			st.tabFocus[tabID] = ev.Data.PaneID
 		}
 		return &trigger{kind: triggerFull}
-	case "pane_closed", "pane_exited":
-		id := ev.Data.PaneID
-		delete(st.lastTitles, id)
-		delete(st.paneTab, id)
-		for tabID, paneID := range st.tabFocus {
-			if paneID == id {
-				delete(st.tabFocus, tabID)
+	case "pane_created", "pane_moved":
+		p := ev.Data.Pane
+		if prev := ev.Data.PreviousPaneID; prev != "" && (p == nil || p.PaneID != prev) {
+			st.prunePane(prev) // pane moved
+		}
+		if p != nil {
+			st.paneTab[p.PaneID] = p.TabID
+			if p.Focused {
+				// A newly split pane can become focused immediately
+				st.tabFocus[p.TabID] = p.PaneID
+			}
+			if prevTab := ev.Data.PreviousTabID; prevTab != "" && prevTab != p.TabID && st.tabFocus[prevTab] == p.PaneID {
+				delete(st.tabFocus, prevTab) // moved out while being the focused pane
 			}
 		}
+		return &trigger{kind: triggerFull}
+	case "pane_closed", "pane_exited":
+		st.prunePane(ev.Data.PaneID)
 		return &trigger{kind: triggerFull}
 	case "tab_closed":
 		st.pruneTab(ev.Data.TabID)
