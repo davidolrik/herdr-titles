@@ -158,6 +158,35 @@ func TestFormatTerminalTitle(t *testing.T) {
 	}
 }
 
+func TestTitleTabName(t *testing.T) {
+	cases := []struct {
+		name                    string
+		agentKind, title        string
+		agentTitles, termTitles bool
+		want                    string
+		ok                      bool
+	}{
+		// 25 runes: the agent arm keeps all of it (limit 40), the terminal
+		// arm truncates to max_name_len (20) — so precedence is observable.
+		{"agent title wins", "claude", "Fix the flaky yaml tests!", true, true, "Fix the flaky yaml tests!", true},
+		{"agent titles off -> terminal", "claude", "Fix the flaky yaml tests!", false, true, "Fix the flaky yaml t", true},
+		{"both off", "claude", "Fix the flaky yaml tests!", false, false, "", false},
+		{"plain pane terminal title", "", "make all", true, true, "make all", true},
+		{"plain pane, terminal off", "", "make all", true, false, "", false},
+		{"empty title always falls back", "claude", "", true, true, "", false},
+	}
+	for _, c := range cases {
+		cfg := namingConfig()
+		cfg.AgentTitles = c.agentTitles
+		cfg.TerminalTitles = c.termTitles
+		got, ok := titleTabName(c.agentKind, c.title, cfg)
+		if got != c.want || ok != c.ok {
+			t.Errorf("%s: titleTabName(%q, %q) = %q, %v; want %q, %v",
+				c.name, c.agentKind, c.title, got, ok, c.want, c.ok)
+		}
+	}
+}
+
 func TestUnwrapInterpreter(t *testing.T) {
 	cases := []struct {
 		name string
