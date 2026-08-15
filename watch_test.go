@@ -515,12 +515,21 @@ func (s *fakeEventServer) serve() {
 			conn.Close()
 			continue
 		}
-		if strings.Contains(line, "events.subscribe") && first {
+		if strings.Contains(line, "events.subscribe") {
 			if s.rejectLayoutSub.Load() && strings.Contains(line, "layout.updated") {
 				conn.Write([]byte(`{"id":"watch","error":{"code":"invalid_request","message":"unknown event type"}}` + "\n"))
 				conn.Close()
 				continue
 			}
+			// A subscribe without the base set is a capability probe: confirm
+			// it, but it is not the event stream.
+			if !strings.Contains(line, "pane.updated") {
+				conn.Write([]byte(`{"id":"watch","result":{"type":"subscription_started"}}` + "\n"))
+				conn.Close()
+				continue
+			}
+		}
+		if strings.Contains(line, "events.subscribe") && first {
 			first = false
 			s.subGot <- line
 			conn.Write([]byte(`{"id":"watch","result":{"type":"subscription_started"}}` + "\n"))
@@ -608,9 +617,14 @@ func TestWatchDaemonFallsBackWithoutLayoutSubscription(t *testing.T) {
 
 	select {
 	case sub := <-srv.subGot:
-		for _, optional := range optionalSubscriptions {
-			if strings.Contains(sub, optional) {
-				t.Fatalf("retry still asked for %s: %s", optional, sub)
+		if strings.Contains(sub, "layout.updated") {
+			t.Fatalf("retry still asked for the rejected layout.updated: %s", sub)
+		}
+		// The other optionals are individually supported and must survive
+		// the degradation — one unknown type must not drop them all.
+		for _, keep := range []string{"tab.closed", "workspace.closed"} {
+			if !strings.Contains(sub, keep) {
+				t.Fatalf("degraded subscribe lost %s: %s", keep, sub)
 			}
 		}
 	case <-time.After(2 * time.Second):

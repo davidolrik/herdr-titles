@@ -21,6 +21,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"net"
@@ -99,10 +100,11 @@ var watchSubscriptions = []string{
 // optionalSubscriptions are used for the classifier's bookkeeping:
 // layout.updated carries each tab's focused pane; the close events prune
 // state, since closing a tab or workspace does not emit per-pane events.
-// They're subscribed separately from the required events because a herdr
-// too old to know any one type rejects the WHOLE subscribe call, so the
-// daemon retries without the optional subscriptions and merely loses the
-// last-focused pane tracking and pruning, not the whole event stream.
+// They're handled separately from the required events because a herdr too
+// old to know any one type rejects the WHOLE subscribe call, which would
+// leave the daemon useless. On rejection, each is probed individually so
+// the server's real capability set is kept, and only genuinely unknown
+// types are dropped.
 var optionalSubscriptions = []string{"layout.updated", "tab.closed", "workspace.closed"}
 
 // classifyState is the classifier's per-daemon memory, owned by the event
@@ -618,8 +620,22 @@ func watchDaemonAt(sockPath, stateDir, session, binPath, configPath string, term
 
 	conn, reader, err := subscribeEvents(sockPath,
 		append(append([]string{}, watchSubscriptions...), optionalSubscriptions...), timings.ReadDeadline)
-	if err != nil {
-		conn, reader, err = subscribeEvents(sockPath, watchSubscriptions, timings.ReadDeadline)
+	if errors.Is(err, errSubscribeRejected) {
+		// An older herdr rejects the whole call on any unknown type. Probe
+		// each optional on its own, so one missing type does not also drop
+		// the others. Transport errors abort instead, so we can retry the
+		// daemon without being locked in a degraded state.
+		subs := append([]string{}, watchSubscriptions...)
+		for _, opt := range optionalSubscriptions {
+			supported, perr := probeSubscription(sockPath, opt, timings.ReadDeadline)
+			if perr != nil {
+				return nil
+			}
+			if supported {
+				subs = append(subs, opt)
+			}
+		}
+		conn, reader, err = subscribeEvents(sockPath, subs, timings.ReadDeadline)
 	}
 	if err != nil {
 		return nil // server not up or subscribe refused; watchdogs retry later
@@ -643,8 +659,18 @@ func watchDaemonAt(sockPath, stateDir, session, binPath, configPath string, term
 	}
 
 	st := newClassifyState()
-	if snap, err := FetchSnapshot(sockPath); err == nil {
-		st.seed(snap)
+	// Transient snapshot failures are retried; persistent failure degrades
+	// to cold maps, which is healed by events and the pane-count fallback
+	// over time.
+	for attempt := 0; ; attempt++ {
+		if snap, err := FetchSnapshot(sockPath); err == nil {
+			st.seed(snap)
+			break
+		}
+		if attempt == 2 {
+			break
+		}
+		time.Sleep(timings.Debounce)
 	}
 	recoverFull := false
 	for {
@@ -698,11 +724,34 @@ func subscribeEvents(sockPath string, subs []string, readDeadline time.Duration)
 	reader := bufio.NewReader(conn)
 	_ = conn.SetReadDeadline(time.Now().Add(readDeadline))
 	ack, err := reader.ReadString('\n')
-	if err != nil || !strings.Contains(ack, "subscription_started") {
+	if err != nil {
 		conn.Close()
-		return nil, nil, fmt.Errorf("events.subscribe not confirmed: %q", strings.TrimSpace(ack))
+		return nil, nil, fmt.Errorf("events.subscribe: %w", err)
+	}
+	if !strings.Contains(ack, "subscription_started") {
+		conn.Close()
+		return nil, nil, fmt.Errorf("%w: %s", errSubscribeRejected, strings.TrimSpace(ack))
 	}
 	return conn, reader, nil
+}
+
+// errSubscribeRejected is a definitive server rejection (unknown event
+// type on an older herdr), as opposed to transport error.
+var errSubscribeRejected = errors.New("events.subscribe rejected")
+
+// probeSubscription checks whether the server accepts one event type, on a
+// throwaway subscription. supported=false with a nil error is a definitive
+// rejection; a non-nil error is transport error.
+func probeSubscription(sockPath, sub string, readDeadline time.Duration) (bool, error) {
+	conn, _, err := subscribeEvents(sockPath, []string{sub}, readDeadline)
+	if errors.Is(err, errSubscribeRejected) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	conn.Close()
+	return true, nil
 }
 
 // statWatcher polls watched files' mtimes and raises env triggers on change.
