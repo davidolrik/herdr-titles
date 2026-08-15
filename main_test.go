@@ -284,4 +284,14 @@ tabs {
 	}
 	// No snapshot is configured on the fake, so a full reconcile would have
 	// failed the run outright — the rename proves the path stayed targeted.
+
+	// A hook event from an unfocused pane must not cause a rename.
+	api.setPaneUnfocused("w1:p1")
+	api.setTabShape("w1:t1", 2, true)
+	api.setPaneTitle("w1:p1", "", "sneaky background title")
+	run("precmd", "fish")
+	_, renames, _ = api.recorded()
+	if len(renames) != before+1 {
+		t.Fatalf("unfocused pane renamed a split: %v", renames)
+	}
 }

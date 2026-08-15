@@ -188,14 +188,16 @@ func runFast(mode string, args []string) error {
 		time.Sleep(200 * time.Millisecond)
 		sock := sessionSocketPath()
 		paneID := os.Getenv("HERDR_PANE_ID")
-		agentKind, title, ok := paneTitle(sock, paneID)
-		if !ok {
-			return nil
-		}
 		return withLock(stateDir, session, func() error {
+			// Read pane info with lock held to prevent out-of-order renames
+			// when 2 hook events fire in short succession.
+			agentKind, title, focused, ok := paneTitle(sock, paneID)
+			if !ok {
+				return nil
+			}
 			// No need to escalate here, the next hook event will retry.
 			_, err := RenameTabForTitle(sock, tabStatePath(stateDir, session),
-				tabID, paneID, agentKind, title, true, tabs)
+				tabID, paneID, agentKind, title, focused, tabs)
 			return err
 		})
 	}
