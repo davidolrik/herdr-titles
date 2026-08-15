@@ -555,6 +555,22 @@ func configWatcher(configPath, exePath, baseline string, interval time.Duration,
 	}
 }
 
+// sendTrigger enqueues a trigger without blocking the event stream. On
+// saturation the trigger is dropped: safe for full/title kinds (the caller
+// escalates to a full pass), but a rename is lost, so we need to be able
+// to roll back the dedup state.
+func sendTrigger(triggers chan<- trigger, tr trigger, st *classifyState) bool {
+	select {
+	case triggers <- tr:
+		return true
+	default:
+		if tr.kind == triggerRename {
+			delete(st.lastTitles, tr.pane.PaneID)
+		}
+		return false
+	}
+}
+
 // watchDaemon runs the daemon without binary or config self-restart (tests).
 func watchDaemon(sockPath, stateDir, session string, watchFiles []string, ops watchOps, timings watchTimings) error {
 	return watchDaemonAt(sockPath, stateDir, session, "", "", true, watchFiles, ops, timings)
@@ -622,7 +638,17 @@ func watchDaemonAt(sockPath, stateDir, session, binPath, configPath string, term
 	if snap, err := FetchSnapshot(sockPath); err == nil {
 		st.seed(snap)
 	}
+	recoverFull := false
 	for {
+		// A drop under saturation escalates to a full pass, retried here
+		// until the scheduler has drained a slot for it.
+		if recoverFull {
+			select {
+			case triggers <- trigger{kind: triggerFull}:
+				recoverFull = false
+			default:
+			}
+		}
 		_ = conn.SetReadDeadline(time.Now().Add(timings.ReadDeadline))
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -631,11 +657,8 @@ func watchDaemonAt(sockPath, stateDir, session, binPath, configPath string, term
 			}
 			break // EOF or dead server: exit; watchdogs revive us
 		}
-		if tr := classifyEvent([]byte(line), st, terminalTitles); tr != nil {
-			select {
-			case triggers <- *tr:
-			default: // scheduler saturated; drop — passes are idempotent
-			}
+		if tr := classifyEvent([]byte(line), st, terminalTitles); tr != nil && !sendTrigger(triggers, *tr, st) {
+			recoverFull = true
 		}
 	}
 

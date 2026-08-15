@@ -137,6 +137,44 @@ func TestClassifyEventPrunesClosedPanes(t *testing.T) {
 	}
 }
 
+// A rename dropped on a saturated scheduler must roll back its dedup commit:
+// herdr only emits on title change, so a committed-but-unsent title (or a
+// later change back to it) would otherwise be suppressed forever.
+func TestSendTriggerRollsBackDroppedRenames(t *testing.T) {
+	st := newClassifyState()
+	paneEv := `{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":"w1:p1","tab_id":"w1:t1","agent":"","terminal_title_stripped":"make"}}}`
+	full := make(chan trigger) // unbuffered and never drained: always saturated
+
+	tr := classifyEvent([]byte(paneEv), st, true)
+	if tr == nil || tr.kind != triggerRename {
+		t.Fatalf("classify => %+v, want rename", tr)
+	}
+	if sendTrigger(full, *tr, st) {
+		t.Fatal("send on a saturated channel reported success")
+	}
+	if _, ok := st.lastTitles["w1:p1"]; ok {
+		t.Error("dropped rename left its dedup commit behind")
+	}
+	// The same event classifies to a trigger again — not suppressed.
+	if tr := classifyEvent([]byte(paneEv), st, true); tr == nil || tr.kind != triggerRename {
+		t.Errorf("event after dropped rename => %+v, want rename", tr)
+	}
+
+	// With room, the send goes through and the commit stays.
+	roomy := make(chan trigger, 1)
+	if tr := classifyEvent([]byte(paneEv), st, true); tr != nil {
+		t.Fatalf("dedup lost after successful classify: %+v", tr)
+	}
+	delete(st.lastTitles, "w1:p1")
+	tr = classifyEvent([]byte(paneEv), st, true)
+	if !sendTrigger(roomy, *tr, st) {
+		t.Fatal("send with room failed")
+	}
+	if st.lastTitles["w1:p1"] != "make" {
+		t.Errorf("successful send lost the dedup commit: %v", st.lastTitles)
+	}
+}
+
 func TestClassifyStateSeed(t *testing.T) {
 	st := newClassifyState()
 	st.seed(&Snapshot{
