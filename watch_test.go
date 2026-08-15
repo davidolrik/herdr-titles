@@ -795,7 +795,7 @@ func TestWatchDaemonRestartsOnBinaryChange(t *testing.T) {
 	timings.BinaryPoll = 20 * time.Millisecond
 	done := make(chan error, 1)
 	go func() {
-		done <- watchDaemonAt(srv.sockPath, stateDir, "wtest", binPath, false, nil, (&opsRecorder{}).ops(), timings)
+		done <- watchDaemonAt(srv.sockPath, stateDir, "wtest", binPath, "", false, nil, (&opsRecorder{}).ops(), timings)
 	}()
 	<-srv.subGot
 
@@ -823,6 +823,55 @@ func TestWatchDaemonRestartsOnBinaryChange(t *testing.T) {
 	<-done
 }
 
+func TestWatchDaemonReloadsOnConfigChange(t *testing.T) {
+	srv := newFakeEventServer(t, true)
+	stateDir := t.TempDir()
+	binPath := filepath.Join(stateDir, "fake-binary")
+	if err := os.WriteFile(binPath, []byte("v1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(stateDir, "config.hcl")
+	if err := os.WriteFile(configPath, []byte("template = \"x\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	reloaded := make(chan string, 1)
+	orig := reloadSelf
+	reloadSelf = func(path string) { reloaded <- path }
+	defer func() { reloadSelf = orig }()
+
+	timings := testTimings()
+	timings.BinaryPoll = 20 * time.Millisecond
+	done := make(chan error, 1)
+	go func() {
+		done <- watchDaemonAt(srv.sockPath, stateDir, "wtest", binPath, configPath, false, nil, (&opsRecorder{}).ops(), timings)
+	}()
+	<-srv.subGot
+
+	// Untouched config: no reload.
+	select {
+	case p := <-reloaded:
+		t.Fatalf("reload without config change: %s", p)
+	case <-time.After(120 * time.Millisecond):
+	}
+
+	// Edit the config: the daemon must re-exec to pick it up.
+	if err := os.WriteFile(configPath, []byte("template = \"x\"\ntabs { terminal_titles = true }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case p := <-reloaded:
+		if p != binPath {
+			t.Errorf("reloaded with %q, want %q", p, binPath)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("config change never triggered a reload")
+	}
+
+	close(srv.closeSub)
+	<-done
+}
+
 func TestWatchDaemonRestartsOnBinaryRemoval(t *testing.T) {
 	srv := newFakeEventServer(t, true)
 	stateDir := t.TempDir()
@@ -839,7 +888,7 @@ func TestWatchDaemonRestartsOnBinaryRemoval(t *testing.T) {
 	timings.BinaryPoll = 20 * time.Millisecond
 	done := make(chan error, 1)
 	go func() {
-		done <- watchDaemonAt(srv.sockPath, stateDir, "wtest", binPath, false, nil, (&opsRecorder{}).ops(), timings)
+		done <- watchDaemonAt(srv.sockPath, stateDir, "wtest", binPath, "", false, nil, (&opsRecorder{}).ops(), timings)
 	}()
 	<-srv.subGot
 
