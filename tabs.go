@@ -121,16 +121,6 @@ func renameTab(sockPath, tabID, label string) {
 	_, _ = apiRequest(sockPath, "tab.rename", map[string]string{"tab_id": tabID, "label": label})
 }
 
-// paneHasAgent reports whether a pane hosts a recognized agent.
-func paneHasAgent(paneID string, agents []Agent) bool {
-	for _, a := range agents {
-		if a.PaneID == paneID {
-			return true
-		}
-	}
-	return false
-}
-
 // computeTabName determines the label a tab should carry, or ok=false when no
 // name is computable (no active pane, process-info blip) — in which case the
 // tab must be left alone, never fall through to a shell name.
@@ -147,10 +137,11 @@ func computeTabName(sockPath string, tab Tab, snap *Snapshot, cfg *TabsConfig) (
 		}
 	}
 	// A pane's own terminal title wins over the process-derived name (and
-	// skips the process-info subprocess) when terminal_titles=true. Agent
-	// panes are excluded: their terminal title IS the agent session title,
-	// which agent_titles governs.
-	if cfg.TerminalTitles && !paneHasAgent(paneID, snap.Agents) {
+	// skips the process-info subprocess) when terminal_titles=true. An
+	// agent pane reach here only with agent_titles=false (or a blank agent
+	// title, which is this same string), and its title counts like any
+	// other pane's.
+	if cfg.TerminalTitles {
 		for _, p := range snap.Panes {
 			if p.PaneID == paneID && p.Title != "" {
 				return FormatTerminalTitle(p.Title, cfg), true
@@ -175,16 +166,13 @@ func RenameTabForTitle(sockPath, statePath, tabID, agentKind, title string, cfg 
 		return nil
 	}
 	var name string
-	if agentKind == "" {
-		if !cfg.TerminalTitles {
-			return nil
-		}
-		name = FormatTerminalTitle(title, cfg)
-	} else {
-		if !cfg.AgentTitles {
-			return nil
-		}
+	switch {
+	case agentKind != "" && cfg.AgentTitles:
 		name = FormatAgentTitle(agentKind, title, cfg)
+	case cfg.TerminalTitles:
+		name = FormatTerminalTitle(title, cfg)
+	default:
+		return nil
 	}
 	label, ok := tabLabel(sockPath, tabID)
 	if !ok {

@@ -48,9 +48,10 @@ type TabsConfig struct {
 	Substitutions    []Substitution
 	AgentTitles      bool
 	AgentTitleMaxLen int
-	// TerminalTitles names a non-agent tab after its pane's terminal title
-	// (terminal_title_stripped) when one is set, in preference to the
-	// foreground program name.
+	// TerminalTitles names a tab after its pane's terminal_title_stripped
+	// when one is set, in preference to the foreground program name. Agent
+	// panes follow AgentTitles if enabled, otherwise an agent's session
+	// title counts as an ordinary terminal title.
 	TerminalTitles bool
 	// WatchTitles enables the per-session daemon that follows agent title
 	// changes (Claude /rename etc.) the moment they happen.

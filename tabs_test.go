@@ -92,18 +92,32 @@ func TestReconcileTabsAgentTitle(t *testing.T) {
 func TestReconcileTabsAgentTitleDisabledFallsBack(t *testing.T) {
 	f := newTabsFixture(t)
 	f.cfg.AgentTitles = false
-	f.cfg.TerminalTitles = true
 	f.api.setProcessInfo("w1:p1", "claude", "claude --resume")
 	snap := singlePaneSnap("")
 	snap.Agents = []Agent{{PaneID: "w1:p1", Kind: "claude", Status: "working", Title: "Fix flaky test"}}
-	// The agent's session title doubles as the pane's terminal title; the
-	// terminal-title path must not resurrect it when agent_titles is off.
+	// The agent's session title doubles as the pane's terminal title; with
+	// terminal_titles off too, the program name is all that remains.
 	snap.Panes[0].Title = "Fix flaky test"
 
 	ReconcileTabs(f.api.sockPath, snap, f.cfg, f.states, "")
 
 	if got := f.renames(t); len(got) != 1 || got[0] != "w1:t1=claude" {
 		t.Errorf("renames = %v, want [w1:t1=claude]", got)
+	}
+}
+
+func TestReconcileTabsAgentTitleDisabledUsesTerminalTitle(t *testing.T) {
+	f := newTabsFixture(t)
+	f.cfg.AgentTitles = false
+	f.cfg.TerminalTitles = true
+	snap := singlePaneSnap("")
+	snap.Agents = []Agent{{PaneID: "w1:p1", Kind: "claude", Status: "working", Title: "Fix flaky test"}}
+	snap.Panes[0].Title = "Fix flaky test"
+
+	ReconcileTabs(f.api.sockPath, snap, f.cfg, f.states, "")
+
+	if got := f.renames(t); len(got) != 1 || got[0] != "w1:t1=Fix flaky test" {
+		t.Errorf("renames = %v, want the terminal title, plain-formatted", got)
 	}
 }
 
@@ -385,5 +399,17 @@ func TestRenameTabForTitlePlainPane(t *testing.T) {
 	_, renames, _ = api.recorded()
 	if len(renames) != 1 {
 		t.Errorf("terminal_titles=false still renamed: %v", renames)
+	}
+
+	// agent_titles off + terminal_titles on: an agent's session title counts
+	// as an ordinary terminal title (plain format, max_name_len).
+	cfg.AgentTitles = false
+	cfg.TerminalTitles = true
+	if err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "claude", "agent session name", cfg); err != nil {
+		t.Fatal(err)
+	}
+	_, renames, _ = api.recorded()
+	if len(renames) != 2 || renames[1] != "w1:t1=agent sess" {
+		t.Errorf("renames = %v, want trailing plain-formatted agent title", renames)
 	}
 }
