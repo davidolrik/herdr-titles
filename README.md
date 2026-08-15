@@ -30,7 +30,9 @@ mysession : Work @ HQ › myproject › 1 › ×2 ✓1
   (MIT), minus the jump-key numbering.
 - **Terminal titles** — with `tabs { terminal_titles = true }`, a pane whose
   shell (or program) sets a terminal title names its tab after that title.
-  The foreground program name remains the fallback (and the default).
+  The foreground program name remains the fallback (and the default). In a
+  background multi-pane tab, the name follows the last-focused pane, so it
+  remains consistent when you switch to that tab again.
 - **Live agent session titles** — a tab hosting a coding agent is named
   after the agent's session title instead of its terminal title or process name
   (`󰚩 Fix flaky integration test`, not `󰚩 claude`), and follows renames —

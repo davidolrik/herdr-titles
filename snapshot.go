@@ -40,6 +40,7 @@ type Snapshot struct {
 	Agents             []Agent
 	Tabs               []Tab
 	Panes              []Pane
+	TabFocus           map[string]string // tab_id -> focused_pane_id
 }
 
 // decodeSnapshot parses a session.snapshot RESULT payload: {"snapshot":{...}}.
@@ -72,6 +73,10 @@ func decodeSnapshot(data []byte) (*Snapshot, error) {
 				Agent         string `json:"agent"`
 				TitleStripped string `json:"terminal_title_stripped"`
 			} `json:"agents"`
+			Layouts []struct {
+				TabID         string `json:"tab_id"`
+				FocusedPaneID string `json:"focused_pane_id"`
+			} `json:"layouts"`
 		} `json:"snapshot"`
 	}
 	if err := json.Unmarshal(data, &payload); err != nil {
@@ -85,6 +90,12 @@ func decodeSnapshot(data []byte) (*Snapshot, error) {
 	snap := &Snapshot{
 		FocusedWorkspaceID: raw.FocusedWorkspaceID,
 		FocusedTabID:       raw.FocusedTabID,
+		TabFocus:           map[string]string{},
+	}
+	for _, l := range raw.Layouts {
+		if l.FocusedPaneID != "" {
+			snap.TabFocus[l.TabID] = l.FocusedPaneID
+		}
 	}
 	for _, w := range raw.Workspaces {
 		if w.WorkspaceID == raw.FocusedWorkspaceID {

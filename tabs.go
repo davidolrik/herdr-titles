@@ -13,14 +13,13 @@ import (
 )
 
 // activePane resolves which pane a tab is named after: a single-pane tab by
-// its sole pane whether or not it is focused; a focused multi-pane tab by the
-// globally focused pane; a background multi-pane tab by none — no name is
-// computable and the tab keeps its current label. A split therefore flips a
-// tab between nameable and un-nameable, which is why pane lifecycle events
-// are subscribed.
-func activePane(tab Tab, panes []Pane) string {
+// its sole pane whether or not it is focused; a multi-pane tab by its
+// layout's remembered focused pane (the pane herdr re-focuses when the tab
+// is next selected). Without layout data (older herdr), a focused multi-pane
+// tab falls back to the globally focused pane and a background tab to none.
+func activePane(tab Tab, snap *Snapshot) string {
 	var tabPanes []Pane
-	for _, p := range panes {
+	for _, p := range snap.Panes {
 		if p.TabID == tab.TabID {
 			tabPanes = append(tabPanes, p)
 		}
@@ -31,8 +30,11 @@ func activePane(tab Tab, panes []Pane) string {
 	if tab.PaneCount == 1 {
 		return tabPanes[0].PaneID
 	}
+	if paneID := snap.TabFocus[tab.TabID]; paneID != "" {
+		return paneID
+	}
 	if tab.Focused {
-		for _, p := range panes {
+		for _, p := range snap.Panes {
 			if p.Focused {
 				return p.PaneID
 			}
@@ -133,7 +135,7 @@ func paneHasAgent(paneID string, agents []Agent) bool {
 // name is computable (no active pane, process-info blip) — in which case the
 // tab must be left alone, never fall through to a shell name.
 func computeTabName(sockPath string, tab Tab, snap *Snapshot, cfg *TabsConfig) (string, bool) {
-	paneID := activePane(tab, snap.Panes)
+	paneID := activePane(tab, snap)
 	if paneID == "" {
 		return "", false
 	}

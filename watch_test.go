@@ -9,51 +9,92 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 )
 
 func TestClassifyEvent(t *testing.T) {
-	last := map[string]string{}
+	st := newClassifyState()
 	paneEv := func(agent, title string) string {
 		return fmt.Sprintf(
 			`{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":"w1:p1","tab_id":"w1:t1","agent":%q,"terminal_title_stripped":%q}}}`,
 			agent, title)
 	}
 
-	if tr := classifyEvent([]byte(paneEv("claude", "First")), last, true); tr == nil || tr.kind != triggerRename || tr.pane.Title != "First" {
+	if tr := classifyEvent([]byte(paneEv("claude", "First")), st, true); tr == nil || tr.kind != triggerRename || tr.pane.Title != "First" {
 		t.Fatalf("new agent title => %+v, want rename trigger", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("claude", "First")), last, true); tr != nil {
+	if tr := classifyEvent([]byte(paneEv("claude", "First")), st, true); tr != nil {
 		t.Errorf("unchanged title => %+v, want nil", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("claude", "Second")), last, true); tr == nil || tr.kind != triggerRename {
+	if tr := classifyEvent([]byte(paneEv("claude", "Second")), st, true); tr == nil || tr.kind != triggerRename {
 		t.Errorf("changed title => %+v, want rename", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("", "shell title")), last, false); tr != nil {
+	if tr := classifyEvent([]byte(paneEv("", "shell title")), st, false); tr != nil {
 		t.Errorf("non-agent title without terminal_titles => %+v, want nil", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("", "shell title")), last, true); tr == nil || tr.kind != triggerRename || tr.pane.Agent != "" {
+	if tr := classifyEvent([]byte(paneEv("", "shell title")), st, true); tr == nil || tr.kind != triggerRename || tr.pane.Agent != "" {
 		t.Errorf("non-agent title => %+v, want rename trigger with empty agent", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("", "shell title")), last, true); tr != nil {
+	if tr := classifyEvent([]byte(paneEv("", "shell title")), st, true); tr != nil {
 		t.Errorf("unchanged non-agent title => %+v, want nil", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("", "")), last, true); tr != nil {
+	if tr := classifyEvent([]byte(paneEv("", "")), st, true); tr != nil {
 		t.Errorf("cleared title => %+v, want nil (no name to apply)", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("", "shell title")), last, true); tr == nil || tr.kind != triggerRename {
+	if tr := classifyEvent([]byte(paneEv("", "shell title")), st, true); tr == nil || tr.kind != triggerRename {
 		t.Errorf("title set again after clearing => %+v, want rename", tr)
 	}
-	if tr := classifyEvent([]byte(`{"event":"pane_agent_status_changed","data":{"type":"pane_agent_status_changed"}}`), last, true); tr == nil || tr.kind != triggerTitle {
+	if tr := classifyEvent([]byte(`{"event":"pane_agent_status_changed","data":{"type":"pane_agent_status_changed"}}`), st, true); tr == nil || tr.kind != triggerTitle {
 		t.Errorf("status change => %+v, want title-only", tr)
 	}
-	if tr := classifyEvent([]byte(`{"event":"tab_focused","data":{"type":"tab_focused"}}`), last, true); tr == nil || tr.kind != triggerFull {
+	if tr := classifyEvent([]byte(`{"event":"tab_focused","data":{"type":"tab_focused"}}`), st, true); tr == nil || tr.kind != triggerFull {
 		t.Errorf("tab focus => %+v, want full", tr)
 	}
-	if tr := classifyEvent([]byte(`not json`), last, true); tr != nil {
+	if tr := classifyEvent([]byte(`not json`), st, true); tr != nil {
 		t.Errorf("garbage => %+v, want nil", tr)
+	}
+}
+
+func TestClassifyEventFocusGate(t *testing.T) {
+	st := newClassifyState()
+	paneEv := func(pane, title string) string {
+		return fmt.Sprintf(
+			`{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":%q,"tab_id":"w1:t1","agent":"","terminal_title_stripped":%q}}}`,
+			pane, title)
+	}
+
+	// layout.updated declares w1:p1 the tab's focused pane and maps both panes.
+	layoutEv := `{"event":"layout_updated","data":{"type":"layout_updated","layout":{"tab_id":"w1:t1","focused_pane_id":"w1:p1","panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"}]}}}`
+	if tr := classifyEvent([]byte(layoutEv), st, true); tr == nil || tr.kind != triggerFull {
+		t.Fatalf("layout update => %+v, want full", tr)
+	}
+
+	if tr := classifyEvent([]byte(paneEv("w1:p1", "focused pane title")), st, true); tr == nil || tr.kind != triggerRename {
+		t.Errorf("focused pane title => %+v, want rename", tr)
+	}
+	if tr := classifyEvent([]byte(paneEv("w1:p2", "background pane title")), st, true); tr != nil {
+		t.Errorf("non-focused pane title => %+v, want nil (tab named after w1:p1)", tr)
+	}
+
+	// pane.focused moves the tab's focus to w1:p2; its titles now rename.
+	focusEv := `{"event":"pane_focused","data":{"type":"pane_focused","pane_id":"w1:p2","workspace_id":"w1"}}`
+	if tr := classifyEvent([]byte(focusEv), st, true); tr == nil || tr.kind != triggerFull {
+		t.Fatalf("pane focus => %+v, want full", tr)
+	}
+	if tr := classifyEvent([]byte(paneEv("w1:p2", "background pane title")), st, true); tr == nil || tr.kind != triggerRename {
+		t.Errorf("newly focused pane title => %+v, want rename", tr)
+	}
+	if tr := classifyEvent([]byte(paneEv("w1:p1", "focused pane title 2")), st, true); tr != nil {
+		t.Errorf("formerly focused pane => %+v, want nil", tr)
+	}
+
+	// A pane in a tab the classifier knows nothing about stays permissive.
+	unknown := `{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":"w9:p9","tab_id":"w9:t9","agent":"","terminal_title_stripped":"new"}}}`
+	if tr := classifyEvent([]byte(unknown), st, true); tr == nil || tr.kind != triggerRename {
+		t.Errorf("unknown tab => %+v, want rename (permissive)", tr)
 	}
 }
 
@@ -160,6 +201,9 @@ type fakeEventServer struct {
 	events   chan string
 	closeSub chan struct{}
 	pingOK   bool
+	// rejectLayoutSub mimics an older herdr: a subscribe with layout.updated
+	// is refused, only the retry without it can succeed.
+	rejectLayoutSub atomic.Bool
 }
 
 func newFakeEventServer(t *testing.T, pingOK bool) *fakeEventServer {
@@ -208,6 +252,11 @@ func (s *fakeEventServer) serve() {
 			continue
 		}
 		if strings.Contains(line, "events.subscribe") && first {
+			if s.rejectLayoutSub.Load() && strings.Contains(line, "layout.updated") {
+				conn.Write([]byte(`{"id":"watch","error":{"code":"invalid_request","message":"unknown event type"}}` + "\n"))
+				conn.Close()
+				continue
+			}
 			first = false
 			s.subGot <- line
 			conn.Write([]byte(`{"id":"watch","result":{"type":"subscription_started"}}` + "\n"))
@@ -248,7 +297,7 @@ func TestWatchDaemonLoop(t *testing.T) {
 
 	select {
 	case sub := <-srv.subGot:
-		for _, want := range []string{"pane.updated", "tab.focused", "pane.agent_detected"} {
+		for _, want := range []string{"pane.updated", "tab.focused", "pane.agent_detected", "layout.updated"} {
 			if !strings.Contains(sub, want) {
 				t.Errorf("subscribe payload missing %s: %s", want, sub)
 			}
@@ -268,6 +317,45 @@ func TestWatchDaemonLoop(t *testing.T) {
 	}
 
 	// EOF ends the daemon cleanly.
+	close(srv.closeSub)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("daemon exit error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("daemon did not exit on EOF")
+	}
+}
+
+func TestWatchDaemonFallsBackWithoutLayoutSubscription(t *testing.T) {
+	srv := newFakeEventServer(t, true)
+	srv.rejectLayoutSub.Store(true)
+	rec := &opsRecorder{}
+	stateDir := t.TempDir()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- watchDaemon(srv.sockPath, stateDir, "wtest", nil, rec.ops(), testTimings())
+	}()
+
+	select {
+	case sub := <-srv.subGot:
+		if strings.Contains(sub, "layout.updated") {
+			t.Fatalf("retry still asked for layout.updated: %s", sub)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("daemon never landed the fallback subscription")
+	}
+
+	// The degraded stream still works end to end.
+	srv.events <- `{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":"w1:p1","tab_id":"w1:t1","agent":"claude","terminal_title_stripped":"Renamed"}}}`
+	time.Sleep(100 * time.Millisecond)
+	_, _, renames := rec.snapshot()
+	if len(renames) != 1 || renames[0] != "w1:t1=Renamed" {
+		t.Fatalf("renames = %v, want [w1:t1=Renamed]", renames)
+	}
+
 	close(srv.closeSub)
 	select {
 	case err := <-done:

@@ -206,6 +206,24 @@ func TestReconcileTabsBackgroundMultiPaneUntouched(t *testing.T) {
 	}
 }
 
+func TestReconcileTabsBackgroundMultiPaneUsesRememberedFocus(t *testing.T) {
+	f := newTabsFixture(t)
+	f.api.setProcessInfo("w1:p2", "nvim", "nvim")
+	snap := &Snapshot{
+		FocusedTabID: "w1:t2",
+		Tabs:         []Tab{{TabID: "w1:t1", Label: "1", PaneCount: 2, Focused: false}},
+		Panes: []Pane{
+			{PaneID: "w1:p1", TabID: "w1:t1"},
+			{PaneID: "w1:p2", TabID: "w1:t1"},
+		},
+		TabFocus: map[string]string{"w1:t1": "w1:p2"},
+	}
+	ReconcileTabs(f.api.sockPath, snap, f.cfg, f.states, "")
+	if got := f.renames(t); len(got) != 1 || got[0] != "w1:t1=nvim" {
+		t.Errorf("renames = %v, want the remembered focused pane's program", got)
+	}
+}
+
 func TestReconcileTabsFocusedMultiPaneUsesFocusedPane(t *testing.T) {
 	f := newTabsFixture(t)
 	f.api.setProcessInfo("w1:p2", "nvim", "nvim")

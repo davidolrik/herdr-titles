@@ -22,6 +22,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net"
 	"os"
 	"os/exec"
@@ -91,21 +92,63 @@ var watchSubscriptions = []string{
 	// cheap title-only pass while the daemon is alive.
 }
 
+// layoutSubscription fires on structural changes (split, move, close) and
+// carries the tab's focused pane — it keeps classifyState.tabFocus and
+// paneTab current between snapshots. Subscribed separately: a herdr too old
+// to know the type rejects the WHOLE subscribe call, so the daemon retries
+// without it and merely loses gate sharpness, not its event stream.
+const layoutSubscription = "layout.updated"
+
+// classifyState is the classifier's per-daemon memory, owned by the event
+// loop goroutine: last stripped titles per pane (dedup), and the tab-focus
+// tracking that mirrors activePane's policy for the targeted rename path.
+type classifyState struct {
+	lastTitles map[string]string // pane_id -> last stripped title
+	paneTab    map[string]string // pane_id -> tab_id
+	tabFocus   map[string]string // tab_id -> focused_pane_id
+}
+
+func newClassifyState() *classifyState {
+	return &classifyState{
+		lastTitles: map[string]string{},
+		paneTab:    map[string]string{},
+		tabFocus:   map[string]string{},
+	}
+}
+
+// seed primes the focus tracking from a snapshot on a best-effort basis.
+func (st *classifyState) seed(snap *Snapshot) {
+	maps.Copy(st.tabFocus, snap.TabFocus)
+	for _, p := range snap.Panes {
+		st.paneTab[p.PaneID] = p.TabID
+	}
+}
+
 // classifyEvent maps one event line to a trigger, tracking last stripped
-// titles per pane so only real changes fire. Without terminalTitles,
-// non-agent pane title changes are dropped outright — nothing downstream
-// would use them. A title cleared to "" is recorded but fires nothing — the
-// targeted rename path has no name to apply. Unknown/garbage lines are nil.
-func classifyEvent(line []byte, lastTitles map[string]string, terminalTitles bool) *trigger {
+// titles per pane so only real changes fire. A rename trigger is raised only
+// for the pane a tab is named after (the layout's focused pane) to avoid
+// bouncing back and forth. Without terminalTitles, non-agent pane title
+// changes are dropped outright —nothing downstream would use them. A title
+// cleared to "" is recorded but fires nothing — the targeted rename path
+// has no name to apply. Unknown/garbage lines are nil.
+func classifyEvent(line []byte, st *classifyState, terminalTitles bool) *trigger {
 	var ev struct {
 		Event string `json:"event"`
 		Data  struct {
-			Pane *struct {
+			PaneID string `json:"pane_id"`
+			Pane   *struct {
 				PaneID string `json:"pane_id"`
 				TabID  string `json:"tab_id"`
 				Agent  string `json:"agent"`
 				Title  string `json:"terminal_title_stripped"`
 			} `json:"pane"`
+			Layout *struct {
+				TabID         string `json:"tab_id"`
+				FocusedPaneID string `json:"focused_pane_id"`
+				Panes         []struct {
+					PaneID string `json:"pane_id"`
+				} `json:"panes"`
+			} `json:"layout"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(line, &ev); err != nil || ev.Event == "" {
@@ -117,16 +160,36 @@ func classifyEvent(line []byte, lastTitles map[string]string, terminalTitles boo
 		if p == nil || (!terminalTitles && p.Agent == "") {
 			return nil
 		}
-		if lastTitles[p.PaneID] == p.Title {
+		st.paneTab[p.PaneID] = p.TabID
+		if focus := st.tabFocus[p.TabID]; focus != "" && focus != p.PaneID {
+			return nil // not the pane the tab is named after
+		}
+		if st.lastTitles[p.PaneID] == p.Title {
 			return nil
 		}
-		lastTitles[p.PaneID] = p.Title
+		st.lastTitles[p.PaneID] = p.Title
 		if p.Title == "" {
 			return nil
 		}
 		return &trigger{kind: triggerRename, pane: paneEvent{
 			PaneID: p.PaneID, TabID: p.TabID, Agent: p.Agent, Title: p.Title,
 		}}
+	case "pane_focused":
+		// The payload has no tab_id; attribute via the tracked pane->tab map.
+		if tabID := st.paneTab[ev.Data.PaneID]; tabID != "" {
+			st.tabFocus[tabID] = ev.Data.PaneID
+		}
+		return &trigger{kind: triggerFull}
+	case "layout_updated":
+		if l := ev.Data.Layout; l != nil {
+			if l.FocusedPaneID != "" {
+				st.tabFocus[l.TabID] = l.FocusedPaneID
+			}
+			for _, p := range l.Panes {
+				st.paneTab[p.PaneID] = l.TabID
+			}
+		}
+		return &trigger{kind: triggerFull}
 	case "pane_agent_status_changed":
 		return &trigger{kind: triggerTitle}
 	default:
@@ -412,26 +475,15 @@ func watchDaemonAt(sockPath, stateDir, session, binPath string, terminalTitles b
 		baseline = fingerprintBinary(binPath)
 	}
 
-	conn, err := net.DialTimeout("unix", sockPath, socketTimeout)
+	conn, reader, err := subscribeEvents(sockPath,
+		append(append([]string{}, watchSubscriptions...), layoutSubscription), timings.ReadDeadline)
 	if err != nil {
-		return nil // server not up; a watchdog will retry later
+		conn, reader, err = subscribeEvents(sockPath, watchSubscriptions, timings.ReadDeadline)
+	}
+	if err != nil {
+		return nil // server not up or subscribe refused; watchdogs retry later
 	}
 	defer conn.Close()
-
-	subs := make([]string, 0, len(watchSubscriptions))
-	for _, s := range watchSubscriptions {
-		subs = append(subs, fmt.Sprintf(`{"type":%q}`, s))
-	}
-	payload := fmt.Sprintf(`{"id":"watch","method":"events.subscribe","params":{"subscriptions":[%s]}}`,
-		joinComma(subs))
-	if _, err := fmt.Fprintf(conn, "%s\n", payload); err != nil {
-		return nil
-	}
-	reader := bufio.NewReader(conn)
-	_ = conn.SetReadDeadline(time.Now().Add(timings.ReadDeadline))
-	if _, err := reader.ReadString('\n'); err != nil {
-		return nil // no subscription confirmation
-	}
 
 	triggers := make(chan trigger, 64)
 	schedStop := make(chan struct{})
@@ -446,7 +498,10 @@ func watchDaemonAt(sockPath, stateDir, session, binPath string, terminalTitles b
 		go binaryWatcher(binPath, baseline, timings.BinaryPoll, stopStat)
 	}
 
-	lastTitles := map[string]string{}
+	st := newClassifyState()
+	if snap, err := FetchSnapshot(sockPath); err == nil {
+		st.seed(snap)
+	}
 	for {
 		_ = conn.SetReadDeadline(time.Now().Add(timings.ReadDeadline))
 		line, err := reader.ReadString('\n')
@@ -456,7 +511,7 @@ func watchDaemonAt(sockPath, stateDir, session, binPath string, terminalTitles b
 			}
 			break // EOF or dead server: exit; watchdogs revive us
 		}
-		if tr := classifyEvent([]byte(line), lastTitles, terminalTitles); tr != nil {
+		if tr := classifyEvent([]byte(line), st, terminalTitles); tr != nil {
 			select {
 			case triggers <- *tr:
 			default: // scheduler saturated; drop — passes are idempotent
@@ -468,6 +523,35 @@ func watchDaemonAt(sockPath, stateDir, session, binPath string, terminalTitles b
 	close(schedStop)
 	<-schedDone
 	return nil
+}
+
+// subscribeEvents dials the session socket and subscribes to the given event
+// types, verifying the server actually confirmed. herdr rejects the whole
+// call on any unknown type, so the daemon would receive nothing if we don't
+// retry on failure.
+func subscribeEvents(sockPath string, subs []string, readDeadline time.Duration) (net.Conn, *bufio.Reader, error) {
+	conn, err := net.DialTimeout("unix", sockPath, socketTimeout)
+	if err != nil {
+		return nil, nil, err
+	}
+	parts := make([]string, 0, len(subs))
+	for _, s := range subs {
+		parts = append(parts, fmt.Sprintf(`{"type":%q}`, s))
+	}
+	payload := fmt.Sprintf(`{"id":"watch","method":"events.subscribe","params":{"subscriptions":[%s]}}`,
+		joinComma(parts))
+	if _, err := fmt.Fprintf(conn, "%s\n", payload); err != nil {
+		conn.Close()
+		return nil, nil, err
+	}
+	reader := bufio.NewReader(conn)
+	_ = conn.SetReadDeadline(time.Now().Add(readDeadline))
+	ack, err := reader.ReadString('\n')
+	if err != nil || !strings.Contains(ack, "subscription_started") {
+		conn.Close()
+		return nil, nil, fmt.Errorf("events.subscribe not confirmed: %q", strings.TrimSpace(ack))
+	}
+	return conn, reader, nil
 }
 
 // statWatcher polls watched files' mtimes and raises env triggers on change.
