@@ -59,6 +59,14 @@ func TestDecodeSnapshotFixture(t *testing.T) {
 	if paneTitled == 0 {
 		t.Error("no pane carried a terminal title")
 	}
+	if len(snap.TabFocus) != len(snap.Tabs) {
+		t.Errorf("TabFocus has %d entries, want one per tab (%d)", len(snap.TabFocus), len(snap.Tabs))
+	}
+	for tabID, paneID := range snap.TabFocus {
+		if tabID == "" || paneID == "" {
+			t.Errorf("TabFocus entry missing ids: %q -> %q", tabID, paneID)
+		}
+	}
 }
 
 func TestDecodeSnapshotInvalid(t *testing.T) {
