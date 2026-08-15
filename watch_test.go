@@ -101,6 +101,74 @@ func TestClassifyEventFocusGate(t *testing.T) {
 	}
 }
 
+func TestClassifyEventPrunesClosedPanes(t *testing.T) {
+	st := newClassifyState()
+	paneEv := func(pane, title string) string {
+		return fmt.Sprintf(
+			`{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":%q,"tab_id":"w1:t1","agent":"","terminal_title_stripped":%q}}}`,
+			pane, title)
+	}
+	layoutEv := `{"event":"layout_updated","data":{"type":"layout_updated","layout":{"tab_id":"w1:t1","focused_pane_id":"w1:p1","panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"}]}}}`
+	closeEv := `{"event":"pane_closed","data":{"type":"pane_closed","pane_id":"w1:p1","workspace_id":"w1"}}`
+
+	classifyEvent([]byte(layoutEv), st, true)
+	if tr := classifyEvent([]byte(paneEv("w1:p1", "make")), st, true); tr == nil || tr.kind != triggerRename {
+		t.Fatalf("set => %+v, want rename", tr)
+	}
+	if tr := classifyEvent([]byte(closeEv), st, true); tr == nil || tr.kind != triggerFull {
+		t.Fatalf("close => %+v, want full", tr)
+	}
+	if len(st.lastTitles) != 0 || len(st.paneTab) != 1 || len(st.tabFocus) != 0 {
+		t.Errorf("close did not prune: titles=%v paneTab=%v tabFocus=%v", st.lastTitles, st.paneTab, st.tabFocus)
+	}
+	// A recycled pane id must not dedup against the dead pane's title.
+	if tr := classifyEvent([]byte(paneEv("w1:p1", "make")), st, true); tr == nil || tr.kind != triggerRename {
+		t.Errorf("reused pane id deduped against stale title: %+v", tr)
+	}
+	// The surviving pane is no longer muted by the dead pane's focus entry.
+	if tr := classifyEvent([]byte(paneEv("w1:p2", "other")), st, true); tr == nil || tr.kind != triggerRename {
+		t.Errorf("surviving pane still muted after focus-holder closed: %+v", tr)
+	}
+}
+
+// Closing a tab or workspace emits no per-pane events, so the tab- and
+// workspace-level events must prune everything they owned.
+func TestClassifyEventPrunesClosedTabsAndWorkspaces(t *testing.T) {
+	st := newClassifyState()
+	seed := func() {
+		for _, ev := range []string{
+			`{"event":"layout_updated","data":{"type":"layout_updated","layout":{"tab_id":"w1:t1","focused_pane_id":"w1:p1","panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"}]}}}`,
+			`{"event":"layout_updated","data":{"type":"layout_updated","layout":{"tab_id":"w2:t1","focused_pane_id":"w2:p1","panes":[{"pane_id":"w2:p1"}]}}}`,
+			`{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":"w1:p1","tab_id":"w1:t1","agent":"","terminal_title_stripped":"make"}}}`,
+		} {
+			classifyEvent([]byte(ev), st, true)
+		}
+	}
+
+	seed()
+	closeTab := `{"event":"tab_closed","data":{"type":"tab_closed","tab_id":"w1:t1","workspace_id":"w1"}}`
+	if tr := classifyEvent([]byte(closeTab), st, true); tr == nil || tr.kind != triggerFull {
+		t.Fatalf("tab close => %+v, want full", tr)
+	}
+	if len(st.tabFocus) != 1 || len(st.paneTab) != 1 || len(st.lastTitles) != 0 {
+		t.Errorf("tab close did not prune its tab: titles=%v paneTab=%v tabFocus=%v",
+			st.lastTitles, st.paneTab, st.tabFocus)
+	}
+
+	seed()
+	closeWs := `{"event":"workspace_closed","data":{"type":"workspace_closed","workspace_id":"w1"}}`
+	if tr := classifyEvent([]byte(closeWs), st, true); tr == nil || tr.kind != triggerFull {
+		t.Fatalf("workspace close => %+v, want full", tr)
+	}
+	if len(st.tabFocus) != 1 || len(st.paneTab) != 1 || len(st.lastTitles) != 0 {
+		t.Errorf("workspace close did not prune its tabs: titles=%v paneTab=%v tabFocus=%v",
+			st.lastTitles, st.paneTab, st.tabFocus)
+	}
+	if _, ok := st.tabFocus["w2:t1"]; !ok {
+		t.Error("workspace close pruned another workspace's tab")
+	}
+}
+
 type opsRecorder struct {
 	mu      sync.Mutex
 	fulls   int
@@ -358,8 +426,10 @@ func TestWatchDaemonFallsBackWithoutLayoutSubscription(t *testing.T) {
 
 	select {
 	case sub := <-srv.subGot:
-		if strings.Contains(sub, "layout.updated") {
-			t.Fatalf("retry still asked for layout.updated: %s", sub)
+		for _, optional := range optionalSubscriptions {
+			if strings.Contains(sub, optional) {
+				t.Fatalf("retry still asked for %s: %s", optional, sub)
+			}
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("daemon never landed the fallback subscription")
