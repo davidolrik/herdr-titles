@@ -186,6 +186,65 @@ func TestClassifyEventUnfocusedTitlesRecorded(t *testing.T) {
 	}
 }
 
+// If a split's new pane arriving via pane.created is already focused, it must
+// own the tab name immediately, because the pane.focused that follows cannot
+// be attributed (the pane was never seen previously), and on old herdr without
+// layout events nothing else would ever heal the focus gate.
+func TestClassifyEventPaneCreatedTakesFocus(t *testing.T) {
+	st := newClassifyState()
+	paneEv := func(pane, title string) string {
+		return fmt.Sprintf(
+			`{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":%q,"tab_id":"w1:t1","agent":"","terminal_title_stripped":%q}}}`,
+			pane, title)
+	}
+	layoutEv := `{"event":"layout_updated","data":{"type":"layout_updated","layout":{"tab_id":"w1:t1","focused_pane_id":"w1:p1","panes":[{"pane_id":"w1:p1"}]}}}`
+	created := `{"event":"pane_created","data":{"type":"pane_created","pane":{"pane_id":"w1:p2","tab_id":"w1:t1","focused":true,"agent":"","terminal_title_stripped":""}}}`
+
+	classifyEvent([]byte(layoutEv), st, true)
+	if tr := classifyEvent([]byte(created), st, true); tr == nil || tr.kind != triggerFull {
+		t.Fatalf("pane created => %+v, want full", tr)
+	}
+	if tr := classifyEvent([]byte(paneEv("w1:p2", "new pane")), st, true); tr == nil || tr.kind != triggerRename {
+		t.Errorf("freshly created focused pane => %+v, want rename", tr)
+	}
+	if tr := classifyEvent([]byte(paneEv("w1:p1", "old pane")), st, true); tr != nil {
+		t.Errorf("pre-split pane still names the tab: %+v", tr)
+	}
+}
+
+// A cross-tab move re-identifies the pane. The previous ID's state must not
+// linger, and the source tab must not retain the lost pane as its focus.
+func TestClassifyEventPaneMovedReidentifies(t *testing.T) {
+	st := newClassifyState()
+	layoutEv := `{"event":"layout_updated","data":{"type":"layout_updated","layout":{"tab_id":"w1:t1","focused_pane_id":"w1:p1","panes":[{"pane_id":"w1:p1"}]}}}`
+	titleEv := `{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":"w1:p1","tab_id":"w1:t1","agent":"","terminal_title_stripped":"make"}}}`
+	movedEv := `{"event":"pane_moved","data":{"type":"pane_moved","pane":{"pane_id":"w2:p5","tab_id":"w2:t1","focused":true,"agent":"","terminal_title_stripped":"make"},"previous_pane_id":"w1:p1","previous_tab_id":"w1:t1"}}`
+
+	classifyEvent([]byte(layoutEv), st, true)
+	classifyEvent([]byte(titleEv), st, true)
+	if tr := classifyEvent([]byte(movedEv), st, true); tr == nil || tr.kind != triggerFull {
+		t.Fatalf("pane moved => %+v, want full", tr)
+	}
+	if _, ok := st.paneTab["w1:p1"]; ok {
+		t.Error("previous pane id not pruned from paneTab")
+	}
+	if _, ok := st.lastTitles["w1:p1"]; ok {
+		t.Error("previous pane id not pruned from lastTitles")
+	}
+	if _, ok := st.tabFocus["w1:t1"]; ok {
+		t.Error("source tab still focused on the departed pane")
+	}
+	if st.paneTab["w2:p5"] != "w2:t1" || st.tabFocus["w2:t1"] != "w2:p5" {
+		t.Errorf("moved pane not tracked at its new identity: paneTab=%v tabFocus=%v",
+			st.paneTab, st.tabFocus)
+	}
+	// The re-identified pane does not inherit the old ID's dedup title.
+	sameTitle := `{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":"w2:p5","tab_id":"w2:t1","agent":"","terminal_title_stripped":"make"}}}`
+	if tr := classifyEvent([]byte(sameTitle), st, true); tr == nil || tr.kind != triggerRename {
+		t.Errorf("moved pane deduped against its previous identity: %+v", tr)
+	}
+}
+
 // Closing a tab or workspace emits no per-pane events, so the tab- and
 // workspace-level events must prune everything they owned.
 func TestClassifyEventPrunesClosedTabsAndWorkspaces(t *testing.T) {
