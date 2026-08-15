@@ -114,8 +114,8 @@ tabs {
   agent_title_max_len = 40
 
   # Prefer using the terminal title (set by your shell or by programs like nvim)
-  # for non-agent panes rather than the foreground process name. Truncated to
-  # max_name_len with no further substitutions.
+  # for non-agent panes rather than the foreground process name. The substitute
+  # rules and max_name_len above apply to the title, but no icons are added.
   terminal_titles = false
 
   # Run the per-session watch daemon. It follows agent title changes (e.g.
