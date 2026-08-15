@@ -242,14 +242,23 @@ func TestFastPath(t *testing.T) {
 		t.Fatalf("disabled tabs still renamed: %v", renames)
 	}
 
-	// terminal titles own the tab, the hook must not rename.
+	// terminal titles own the tab, the hook must not rename, but it must
+	// still probe for a dead daemon. daemonAlive's O_CREATE open leaves
+	// the lock file behind, so its reappearance proves the probe ran.
 	if err := os.WriteFile(filepath.Join(configDir, "config.hcl"),
 		[]byte("template = \"x\"\ntabs {\n  terminal_titles = true\n  watch_titles = false\n}\n"), 0o644); err != nil {
 		t.Fatal(err)
+	}
+	lockPath := filepath.Join(stateDir, "watch.lock.fastsess")
+	if err := os.Remove(lockPath); err != nil {
+		t.Fatalf("lock file missing before terminal-titles run: %v", err)
 	}
 	run("preexec", "nvim x")
 	_, renames, _ = api.recorded()
 	if len(renames) != before {
 		t.Fatalf("terminal_titles=true still renamed from the hook: %v", renames)
+	}
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Errorf("terminal-titles fast path skipped the daemon probe: %v", err)
 	}
 }

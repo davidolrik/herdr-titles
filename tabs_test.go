@@ -223,6 +223,60 @@ func TestRenameTabForTitleClearFallsBackToProgram(t *testing.T) {
 	}
 }
 
+// With both title modes off, the daemon has no mandate over the tab: neither
+// a set nor a clear may touch the API — not even the clear's process-info
+// fallback.
+func TestRenameTabForTitleBothModesOff(t *testing.T) {
+	api := newFakeAPI(t)
+	statePath := filepath.Join(t.TempDir(), "tabstate.test.json")
+	cfg := DefaultTabsConfig()
+	cfg.ShellName = "zsh"
+	cfg.AgentTitles = false
+	cfg.TerminalTitles = false
+	api.setTab("w1:t1", "zsh")
+	api.setProcessInfo("w1:p1", "nvim", "nvim")
+
+	for _, title := range []string{"Session title", ""} {
+		if err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "w1:p1", "claude", title, cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, renames, _ := api.recorded()
+	api.mu.Lock()
+	infoReqs := api.infoReqs
+	api.mu.Unlock()
+	if len(renames) != 0 || infoReqs != 0 {
+		t.Errorf("both modes off still touched the API: renames=%v infoReqs=%d", renames, infoReqs)
+	}
+}
+
+// A clear whose fallback program is the shell renames to the empty label
+// under hide_shell, handing the tab back to herdr's numbering.
+func TestRenameTabForTitleClearHideShell(t *testing.T) {
+	api := newFakeAPI(t)
+	statePath := filepath.Join(t.TempDir(), "tabstate.test.json")
+	cfg := DefaultTabsConfig()
+	cfg.ShellName = "zsh"
+	cfg.TerminalTitles = true
+	cfg.HideShell = true
+	api.setTab("w1:t1", "make")
+	api.setProcessInfo("w1:p1", "zsh", "zsh")
+	if err := SaveTabStates(statePath, TabStates{"w1:t1": {Auto: "make", Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "w1:p1", "", "", cfg); err != nil {
+		t.Fatal(err)
+	}
+	_, renames, _ := api.recorded()
+	if len(renames) != 1 || renames[0] != "w1:t1=" {
+		t.Fatalf("renames = %v, want [w1:t1=] (hide_shell empty label)", renames)
+	}
+	if st := LoadTabStates(statePath)["w1:t1"]; st.Auto != "" || !st.Enabled {
+		t.Errorf("state = %+v, want owned empty label", st)
+	}
+}
+
 func TestReconcileTabsBackgroundMultiPaneUntouched(t *testing.T) {
 	f := newTabsFixture(t)
 	snap := &Snapshot{
@@ -256,6 +310,26 @@ func TestReconcileTabsBackgroundMultiPaneUsesRememberedFocus(t *testing.T) {
 	ReconcileTabs(f.api.sockPath, snap, f.cfg, f.states, "")
 	if got := f.renames(t); len(got) != 1 || got[0] != "w1:t1=nvim" {
 		t.Errorf("renames = %v, want the remembered focused pane's program", got)
+	}
+}
+
+// The tab layout's remembered pane disagrees with the globally focused pane.
+// The layout wins, since herdr is the source of truth.
+func TestReconcileTabsFocusedMultiPaneLayoutFocusWins(t *testing.T) {
+	f := newTabsFixture(t)
+	f.api.setProcessInfo("w1:p1", "htop", "htop")
+	snap := &Snapshot{
+		FocusedTabID: "w1:t1",
+		Tabs:         []Tab{{TabID: "w1:t1", Label: "", PaneCount: 2, Focused: true}},
+		Panes: []Pane{
+			{PaneID: "w1:p1", TabID: "w1:t1"},
+			{PaneID: "w1:p2", TabID: "w1:t1", Focused: true},
+		},
+		TabFocus: map[string]string{"w1:t1": "w1:p1"},
+	}
+	ReconcileTabs(f.api.sockPath, snap, f.cfg, f.states, "")
+	if got := f.renames(t); len(got) != 1 || got[0] != "w1:t1=htop" {
+		t.Errorf("renames = %v, want the layout-remembered pane's program", got)
 	}
 }
 
