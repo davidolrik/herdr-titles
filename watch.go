@@ -158,12 +158,11 @@ func (st *classifyState) seed(snap *Snapshot) {
 // classifyEvent maps one event line to a trigger, tracking last stripped
 // titles per pane so only real changes fire. A rename trigger is raised only
 // for the pane a tab is named after (the layout's focused pane) to avoid
-// bouncing back and forth. Without terminalTitles, non-agent pane title
-// changes are dropped outright — nothing downstream would use them. A title
-// cleared to "" raises an empty-title rename trigger, which overwrites any
-// queued set for the pane and renames to the fallback program name.
-// Unknown/garbage lines are nil.
-func classifyEvent(line []byte, st *classifyState, terminalTitles bool) *trigger {
+// bouncing back and forth. Title changes are dropped if they're not used
+// by any configured mode. A title cleared to "" raises an empty-title rename
+// trigger, which overwrites any queued set for the pane and renames to the
+// fallback program name. Unknown/garbage lines are nil.
+func classifyEvent(line []byte, st *classifyState, agentTitles, terminalTitles bool) *trigger {
 	var ev struct {
 		Event string `json:"event"`
 		Data  struct {
@@ -194,7 +193,7 @@ func classifyEvent(line []byte, st *classifyState, terminalTitles bool) *trigger
 	switch ev.Event {
 	case "pane_updated":
 		p := ev.Data.Pane
-		if p == nil || (!terminalTitles && p.Agent == "") {
+		if p == nil || (!terminalTitles && (!agentTitles || p.Agent == "")) {
 			return nil
 		}
 		st.paneTab[p.PaneID] = p.TabID
@@ -583,7 +582,7 @@ func sendTrigger(triggers chan<- trigger, tr trigger, st *classifyState) bool {
 
 // watchDaemon runs the daemon without binary or config self-restart (tests).
 func watchDaemon(sockPath, stateDir, session string, watchFiles []string, ops watchOps, timings watchTimings) error {
-	return watchDaemonAt(sockPath, stateDir, session, "", "", true, watchFiles, ops, timings)
+	return watchDaemonAt(sockPath, stateDir, session, "", "", true, true, watchFiles, ops, timings)
 }
 
 // watchDaemonAt is the detached daemon body: singleton lock, subscribe, then
@@ -594,7 +593,7 @@ func watchDaemon(sockPath, stateDir, session string, watchFiles []string, ops wa
 // plugin config, watched to ensure targeted and full passes are consistent.
 // Returns nil on every orderly exit — a held lock or a dead server are normal,
 // not errors.
-func watchDaemonAt(sockPath, stateDir, session, binPath, configPath string, terminalTitles bool, watchFiles []string, ops watchOps, timings watchTimings) error {
+func watchDaemonAt(sockPath, stateDir, session, binPath, configPath string, agentTitles, terminalTitles bool, watchFiles []string, ops watchOps, timings watchTimings) error {
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return err
 	}
@@ -691,7 +690,7 @@ func watchDaemonAt(sockPath, stateDir, session, binPath, configPath string, term
 			}
 			break // EOF or dead server: exit; watchdogs revive us
 		}
-		if tr := classifyEvent([]byte(line), st, terminalTitles); tr != nil && !sendTrigger(triggers, *tr, st) {
+		if tr := classifyEvent([]byte(line), st, agentTitles, terminalTitles); tr != nil && !sendTrigger(triggers, *tr, st) {
 			recoverFull = true
 		}
 	}
@@ -880,7 +879,7 @@ func runWatchDetached() error {
 			return retryFull
 		},
 	}
-	return watchDaemonAt(sockPath, stateDir, session, exePath, configPath, cfg.Tabs.TerminalTitles, cfg.EnvWatchFiles, ops, defaultWatchTimings())
+	return watchDaemonAt(sockPath, stateDir, session, exePath, configPath, cfg.Tabs.AgentTitles, cfg.Tabs.TerminalTitles, cfg.EnvWatchFiles, ops, defaultWatchTimings())
 }
 
 // daemonAlive probes the daemon's liveness lock: if we can take it, nobody

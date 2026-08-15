@@ -23,41 +23,55 @@ func TestClassifyEvent(t *testing.T) {
 			agent, title)
 	}
 
-	if tr := classifyEvent([]byte(paneEv("claude", "First")), st, true); tr == nil || tr.kind != triggerRename || tr.pane.Title != "First" {
+	if tr := classifyEvent([]byte(paneEv("claude", "First")), st, true, true); tr == nil || tr.kind != triggerRename || tr.pane.Title != "First" {
 		t.Fatalf("new agent title => %+v, want rename trigger", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("claude", "First")), st, true); tr != nil {
+	if tr := classifyEvent([]byte(paneEv("claude", "First")), st, true, true); tr != nil {
 		t.Errorf("unchanged title => %+v, want nil", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("claude", "Second")), st, true); tr == nil || tr.kind != triggerRename {
+	if tr := classifyEvent([]byte(paneEv("claude", "Second")), st, true, true); tr == nil || tr.kind != triggerRename {
 		t.Errorf("changed title => %+v, want rename", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("", "shell title")), st, false); tr != nil {
+	if tr := classifyEvent([]byte(paneEv("", "shell title")), st, true, false); tr != nil {
 		t.Errorf("non-agent title without terminal_titles => %+v, want nil", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("", "shell title")), st, true); tr == nil || tr.kind != triggerRename || tr.pane.Agent != "" {
+	if tr := classifyEvent([]byte(paneEv("", "shell title")), st, true, true); tr == nil || tr.kind != triggerRename || tr.pane.Agent != "" {
 		t.Errorf("non-agent title => %+v, want rename trigger with empty agent", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("", "shell title")), st, true); tr != nil {
+	if tr := classifyEvent([]byte(paneEv("", "shell title")), st, true, true); tr != nil {
 		t.Errorf("unchanged non-agent title => %+v, want nil", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("", "")), st, true); tr == nil || tr.kind != triggerRename || tr.pane.Title != "" {
+	if tr := classifyEvent([]byte(paneEv("", "")), st, true, true); tr == nil || tr.kind != triggerRename || tr.pane.Title != "" {
 		t.Errorf("cleared title => %+v, want empty-title rename (cancel)", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("", "")), st, true); tr != nil {
+	if tr := classifyEvent([]byte(paneEv("", "")), st, true, true); tr != nil {
 		t.Errorf("still-cleared title => %+v, want nil (no change)", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("", "shell title")), st, true); tr == nil || tr.kind != triggerRename {
+	if tr := classifyEvent([]byte(paneEv("", "shell title")), st, true, true); tr == nil || tr.kind != triggerRename {
 		t.Errorf("title set again after clearing => %+v, want rename", tr)
 	}
-	if tr := classifyEvent([]byte(`{"event":"pane_agent_status_changed","data":{"type":"pane_agent_status_changed"}}`), st, true); tr == nil || tr.kind != triggerTitle {
+	if tr := classifyEvent([]byte(`{"event":"pane_agent_status_changed","data":{"type":"pane_agent_status_changed"}}`), st, true, true); tr == nil || tr.kind != triggerTitle {
 		t.Errorf("status change => %+v, want title-only", tr)
 	}
-	if tr := classifyEvent([]byte(`{"event":"tab_focused","data":{"type":"tab_focused"}}`), st, true); tr == nil || tr.kind != triggerFull {
+	if tr := classifyEvent([]byte(`{"event":"tab_focused","data":{"type":"tab_focused"}}`), st, true, true); tr == nil || tr.kind != triggerFull {
 		t.Errorf("tab focus => %+v, want full", tr)
 	}
-	if tr := classifyEvent([]byte(`not json`), st, true); tr != nil {
+	if tr := classifyEvent([]byte(`not json`), st, true, true); tr != nil {
 		t.Errorf("garbage => %+v, want nil", tr)
+	}
+}
+
+// With both title modes off, the classifier ignores title events.
+func TestClassifyEventAgentGate(t *testing.T) {
+	st := newClassifyState()
+	agentEv := `{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":"w1:p1","tab_id":"w1:t1","agent":"claude","terminal_title_stripped":"Fix test"}}}`
+	if tr := classifyEvent([]byte(agentEv), st, false, false); tr != nil {
+		t.Errorf("agent title with both modes off => %+v, want nil", tr)
+	}
+	// agent_titles off but terminal_titles on: the agent's session title
+	// still names the tab as an ordinary terminal title.
+	if tr := classifyEvent([]byte(agentEv), st, false, true); tr == nil || tr.kind != triggerRename {
+		t.Errorf("agent title with terminal_titles only => %+v, want rename", tr)
 	}
 }
 
@@ -71,14 +85,14 @@ func TestClassifyEventFocusGate(t *testing.T) {
 
 	// layout.updated declares w1:p1 the tab's focused pane and maps both panes.
 	layoutEv := `{"event":"layout_updated","data":{"type":"layout_updated","layout":{"tab_id":"w1:t1","focused_pane_id":"w1:p1","panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"}]}}}`
-	if tr := classifyEvent([]byte(layoutEv), st, true); tr == nil || tr.kind != triggerFull {
+	if tr := classifyEvent([]byte(layoutEv), st, true, true); tr == nil || tr.kind != triggerFull {
 		t.Fatalf("layout update => %+v, want full", tr)
 	}
 
-	if tr := classifyEvent([]byte(paneEv("w1:p1", "focused pane title")), st, true); tr == nil || tr.kind != triggerRename {
+	if tr := classifyEvent([]byte(paneEv("w1:p1", "focused pane title")), st, true, true); tr == nil || tr.kind != triggerRename {
 		t.Errorf("focused pane title => %+v, want rename", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("w1:p2", "background pane title")), st, true); tr != nil {
+	if tr := classifyEvent([]byte(paneEv("w1:p2", "background pane title")), st, true, true); tr != nil {
 		t.Errorf("non-focused pane title => %+v, want nil (tab named after w1:p1)", tr)
 	}
 
@@ -86,23 +100,23 @@ func TestClassifyEventFocusGate(t *testing.T) {
 	// recorded, so replaying it dedups — the focus change's full pass already
 	// applied it — while a genuinely new title renames.
 	focusEv := `{"event":"pane_focused","data":{"type":"pane_focused","pane_id":"w1:p2","workspace_id":"w1"}}`
-	if tr := classifyEvent([]byte(focusEv), st, true); tr == nil || tr.kind != triggerFull {
+	if tr := classifyEvent([]byte(focusEv), st, true, true); tr == nil || tr.kind != triggerFull {
 		t.Fatalf("pane focus => %+v, want full", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("w1:p2", "background pane title")), st, true); tr != nil {
+	if tr := classifyEvent([]byte(paneEv("w1:p2", "background pane title")), st, true, true); tr != nil {
 		t.Errorf("recorded title replayed after focus switch => %+v, want nil", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("w1:p2", "fresh title")), st, true); tr == nil || tr.kind != triggerRename || !tr.pane.FocusKnown {
+	if tr := classifyEvent([]byte(paneEv("w1:p2", "fresh title")), st, true, true); tr == nil || tr.kind != triggerRename || !tr.pane.FocusKnown {
 		t.Errorf("newly focused pane's new title => %+v, want rename with FocusKnown", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("w1:p1", "focused pane title 2")), st, true); tr != nil {
+	if tr := classifyEvent([]byte(paneEv("w1:p1", "focused pane title 2")), st, true, true); tr != nil {
 		t.Errorf("formerly focused pane => %+v, want nil", tr)
 	}
 
 	// A pane in a tab the classifier knows nothing about is passed through
 	// unverified; the rename op resolves it via the tab's pane count.
 	unknown := `{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":"w9:p9","tab_id":"w9:t9","agent":"","terminal_title_stripped":"new"}}}`
-	if tr := classifyEvent([]byte(unknown), st, true); tr == nil || tr.kind != triggerRename || tr.pane.FocusKnown {
+	if tr := classifyEvent([]byte(unknown), st, true, true); tr == nil || tr.kind != triggerRename || tr.pane.FocusKnown {
 		t.Errorf("unknown tab => %+v, want rename without FocusKnown", tr)
 	}
 }
@@ -117,22 +131,22 @@ func TestClassifyEventPrunesClosedPanes(t *testing.T) {
 	layoutEv := `{"event":"layout_updated","data":{"type":"layout_updated","layout":{"tab_id":"w1:t1","focused_pane_id":"w1:p1","panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"}]}}}`
 	closeEv := `{"event":"pane_closed","data":{"type":"pane_closed","pane_id":"w1:p1","workspace_id":"w1"}}`
 
-	classifyEvent([]byte(layoutEv), st, true)
-	if tr := classifyEvent([]byte(paneEv("w1:p1", "make")), st, true); tr == nil || tr.kind != triggerRename {
+	classifyEvent([]byte(layoutEv), st, true, true)
+	if tr := classifyEvent([]byte(paneEv("w1:p1", "make")), st, true, true); tr == nil || tr.kind != triggerRename {
 		t.Fatalf("set => %+v, want rename", tr)
 	}
-	if tr := classifyEvent([]byte(closeEv), st, true); tr == nil || tr.kind != triggerFull {
+	if tr := classifyEvent([]byte(closeEv), st, true, true); tr == nil || tr.kind != triggerFull {
 		t.Fatalf("close => %+v, want full", tr)
 	}
 	if len(st.lastTitles) != 0 || len(st.paneTab) != 1 || len(st.tabFocus) != 0 {
 		t.Errorf("close did not prune: titles=%v paneTab=%v tabFocus=%v", st.lastTitles, st.paneTab, st.tabFocus)
 	}
 	// A recycled pane id must not dedup against the dead pane's title.
-	if tr := classifyEvent([]byte(paneEv("w1:p1", "make")), st, true); tr == nil || tr.kind != triggerRename {
+	if tr := classifyEvent([]byte(paneEv("w1:p1", "make")), st, true, true); tr == nil || tr.kind != triggerRename {
 		t.Errorf("reused pane id deduped against stale title: %+v", tr)
 	}
 	// The surviving pane is no longer muted by the dead pane's focus entry.
-	if tr := classifyEvent([]byte(paneEv("w1:p2", "other")), st, true); tr == nil || tr.kind != triggerRename {
+	if tr := classifyEvent([]byte(paneEv("w1:p2", "other")), st, true, true); tr == nil || tr.kind != triggerRename {
 		t.Errorf("surviving pane still muted after focus-holder closed: %+v", tr)
 	}
 }
@@ -170,7 +184,7 @@ func TestSendTriggerRollsBackDroppedRenames(t *testing.T) {
 	paneEv := `{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":"w1:p1","tab_id":"w1:t1","agent":"","terminal_title_stripped":"make"}}}`
 	full := make(chan trigger) // unbuffered and never drained: always saturated
 
-	tr := classifyEvent([]byte(paneEv), st, true)
+	tr := classifyEvent([]byte(paneEv), st, true, true)
 	if tr == nil || tr.kind != triggerRename {
 		t.Fatalf("classify => %+v, want rename", tr)
 	}
@@ -181,17 +195,17 @@ func TestSendTriggerRollsBackDroppedRenames(t *testing.T) {
 		t.Error("dropped rename left its dedup commit behind")
 	}
 	// The same event classifies to a trigger again — not suppressed.
-	if tr := classifyEvent([]byte(paneEv), st, true); tr == nil || tr.kind != triggerRename {
+	if tr := classifyEvent([]byte(paneEv), st, true, true); tr == nil || tr.kind != triggerRename {
 		t.Errorf("event after dropped rename => %+v, want rename", tr)
 	}
 
 	// With room, the send goes through and the commit stays.
 	roomy := make(chan trigger, 1)
-	if tr := classifyEvent([]byte(paneEv), st, true); tr != nil {
+	if tr := classifyEvent([]byte(paneEv), st, true, true); tr != nil {
 		t.Fatalf("dedup lost after successful classify: %+v", tr)
 	}
 	delete(st.lastTitles, "w1:p1")
-	tr = classifyEvent([]byte(paneEv), st, true)
+	tr = classifyEvent([]byte(paneEv), st, true, true)
 	if !sendTrigger(roomy, *tr, st) {
 		t.Fatal("send with room failed")
 	}
@@ -215,16 +229,16 @@ func TestClassifyStateSeed(t *testing.T) {
 			pane, title)
 	}
 
-	if tr := classifyEvent([]byte(paneEv("w1:p2", "background")), st, true); tr != nil {
+	if tr := classifyEvent([]byte(paneEv("w1:p2", "background")), st, true, true); tr != nil {
 		t.Errorf("seeded focus did not gate the non-focused pane: %+v", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("w1:p1", "focused")), st, true); tr == nil || tr.kind != triggerRename {
+	if tr := classifyEvent([]byte(paneEv("w1:p1", "focused")), st, true, true); tr == nil || tr.kind != triggerRename {
 		t.Errorf("seeded focused pane => %+v, want rename", tr)
 	}
 
 	focusEv := `{"event":"pane_focused","data":{"type":"pane_focused","pane_id":"w1:p2","workspace_id":"w1"}}`
-	classifyEvent([]byte(focusEv), st, true)
-	if tr := classifyEvent([]byte(paneEv("w1:p2", "fresh")), st, true); tr == nil || tr.kind != triggerRename {
+	classifyEvent([]byte(focusEv), st, true, true)
+	if tr := classifyEvent([]byte(paneEv("w1:p2", "fresh")), st, true, true); tr == nil || tr.kind != triggerRename {
 		t.Errorf("focus switch via seeded paneTab => %+v, want rename", tr)
 	}
 }
@@ -241,11 +255,11 @@ func TestClassifyEventUnfocusedTitlesRecorded(t *testing.T) {
 	layoutEv := `{"event":"layout_updated","data":{"type":"layout_updated","layout":{"tab_id":"w1:t1","focused_pane_id":"w1:p1","panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"}]}}}`
 	focusEv := `{"event":"pane_focused","data":{"type":"pane_focused","pane_id":"w1:p2","workspace_id":"w1"}}`
 
-	classifyEvent([]byte(layoutEv), st, true)
-	classifyEvent([]byte(paneEv("w1:p2", "A")), st, true)
-	classifyEvent([]byte(paneEv("w1:p2", "B")), st, true)
-	classifyEvent([]byte(focusEv), st, true)
-	if tr := classifyEvent([]byte(paneEv("w1:p2", "A")), st, true); tr == nil || tr.kind != triggerRename || tr.pane.Title != "A" {
+	classifyEvent([]byte(layoutEv), st, true, true)
+	classifyEvent([]byte(paneEv("w1:p2", "A")), st, true, true)
+	classifyEvent([]byte(paneEv("w1:p2", "B")), st, true, true)
+	classifyEvent([]byte(focusEv), st, true, true)
+	if tr := classifyEvent([]byte(paneEv("w1:p2", "A")), st, true, true); tr == nil || tr.kind != triggerRename || tr.pane.Title != "A" {
 		t.Errorf("change back to a title recorded while unfocused => %+v, want rename to A", tr)
 	}
 }
@@ -264,14 +278,14 @@ func TestClassifyEventPaneCreatedTakesFocus(t *testing.T) {
 	layoutEv := `{"event":"layout_updated","data":{"type":"layout_updated","layout":{"tab_id":"w1:t1","focused_pane_id":"w1:p1","panes":[{"pane_id":"w1:p1"}]}}}`
 	created := `{"event":"pane_created","data":{"type":"pane_created","pane":{"pane_id":"w1:p2","tab_id":"w1:t1","focused":true,"agent":"","terminal_title_stripped":""}}}`
 
-	classifyEvent([]byte(layoutEv), st, true)
-	if tr := classifyEvent([]byte(created), st, true); tr == nil || tr.kind != triggerFull {
+	classifyEvent([]byte(layoutEv), st, true, true)
+	if tr := classifyEvent([]byte(created), st, true, true); tr == nil || tr.kind != triggerFull {
 		t.Fatalf("pane created => %+v, want full", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("w1:p2", "new pane")), st, true); tr == nil || tr.kind != triggerRename {
+	if tr := classifyEvent([]byte(paneEv("w1:p2", "new pane")), st, true, true); tr == nil || tr.kind != triggerRename {
 		t.Errorf("freshly created focused pane => %+v, want rename", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("w1:p1", "old pane")), st, true); tr != nil {
+	if tr := classifyEvent([]byte(paneEv("w1:p1", "old pane")), st, true, true); tr != nil {
 		t.Errorf("pre-split pane still names the tab: %+v", tr)
 	}
 }
@@ -284,9 +298,9 @@ func TestClassifyEventPaneMovedReidentifies(t *testing.T) {
 	titleEv := `{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":"w1:p1","tab_id":"w1:t1","agent":"","terminal_title_stripped":"make"}}}`
 	movedEv := `{"event":"pane_moved","data":{"type":"pane_moved","pane":{"pane_id":"w2:p5","tab_id":"w2:t1","focused":true,"agent":"","terminal_title_stripped":"make"},"previous_pane_id":"w1:p1","previous_tab_id":"w1:t1"}}`
 
-	classifyEvent([]byte(layoutEv), st, true)
-	classifyEvent([]byte(titleEv), st, true)
-	if tr := classifyEvent([]byte(movedEv), st, true); tr == nil || tr.kind != triggerFull {
+	classifyEvent([]byte(layoutEv), st, true, true)
+	classifyEvent([]byte(titleEv), st, true, true)
+	if tr := classifyEvent([]byte(movedEv), st, true, true); tr == nil || tr.kind != triggerFull {
 		t.Fatalf("pane moved => %+v, want full", tr)
 	}
 	if _, ok := st.paneTab["w1:p1"]; ok {
@@ -304,7 +318,7 @@ func TestClassifyEventPaneMovedReidentifies(t *testing.T) {
 	}
 	// The re-identified pane does not inherit the old ID's dedup title.
 	sameTitle := `{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":"w2:p5","tab_id":"w2:t1","agent":"","terminal_title_stripped":"make"}}}`
-	if tr := classifyEvent([]byte(sameTitle), st, true); tr == nil || tr.kind != triggerRename {
+	if tr := classifyEvent([]byte(sameTitle), st, true, true); tr == nil || tr.kind != triggerRename {
 		t.Errorf("moved pane deduped against its previous identity: %+v", tr)
 	}
 }
@@ -319,13 +333,13 @@ func TestClassifyEventPrunesClosedTabsAndWorkspaces(t *testing.T) {
 			`{"event":"layout_updated","data":{"type":"layout_updated","layout":{"tab_id":"w2:t1","focused_pane_id":"w2:p1","panes":[{"pane_id":"w2:p1"}]}}}`,
 			`{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":"w1:p1","tab_id":"w1:t1","agent":"","terminal_title_stripped":"make"}}}`,
 		} {
-			classifyEvent([]byte(ev), st, true)
+			classifyEvent([]byte(ev), st, true, true)
 		}
 	}
 
 	seed()
 	closeTab := `{"event":"tab_closed","data":{"type":"tab_closed","tab_id":"w1:t1","workspace_id":"w1"}}`
-	if tr := classifyEvent([]byte(closeTab), st, true); tr == nil || tr.kind != triggerFull {
+	if tr := classifyEvent([]byte(closeTab), st, true, true); tr == nil || tr.kind != triggerFull {
 		t.Fatalf("tab close => %+v, want full", tr)
 	}
 	if len(st.tabFocus) != 1 || len(st.paneTab) != 1 || len(st.lastTitles) != 0 {
@@ -335,7 +349,7 @@ func TestClassifyEventPrunesClosedTabsAndWorkspaces(t *testing.T) {
 
 	seed()
 	closeWs := `{"event":"workspace_closed","data":{"type":"workspace_closed","workspace_id":"w1"}}`
-	if tr := classifyEvent([]byte(closeWs), st, true); tr == nil || tr.kind != triggerFull {
+	if tr := classifyEvent([]byte(closeWs), st, true, true); tr == nil || tr.kind != triggerFull {
 		t.Fatalf("workspace close => %+v, want full", tr)
 	}
 	if len(st.tabFocus) != 1 || len(st.paneTab) != 1 || len(st.lastTitles) != 0 {
@@ -873,7 +887,7 @@ func TestWatchDaemonRestartsOnBinaryChange(t *testing.T) {
 	timings.BinaryPoll = 20 * time.Millisecond
 	done := make(chan error, 1)
 	go func() {
-		done <- watchDaemonAt(srv.sockPath, stateDir, "wtest", binPath, "", false, nil, (&opsRecorder{}).ops(), timings)
+		done <- watchDaemonAt(srv.sockPath, stateDir, "wtest", binPath, "", true, false, nil, (&opsRecorder{}).ops(), timings)
 	}()
 	<-srv.subGot
 
@@ -922,7 +936,7 @@ func TestWatchDaemonReloadsOnConfigChange(t *testing.T) {
 	timings.BinaryPoll = 20 * time.Millisecond
 	done := make(chan error, 1)
 	go func() {
-		done <- watchDaemonAt(srv.sockPath, stateDir, "wtest", binPath, configPath, false, nil, (&opsRecorder{}).ops(), timings)
+		done <- watchDaemonAt(srv.sockPath, stateDir, "wtest", binPath, configPath, true, false, nil, (&opsRecorder{}).ops(), timings)
 	}()
 	<-srv.subGot
 
@@ -966,7 +980,7 @@ func TestWatchDaemonRestartsOnBinaryRemoval(t *testing.T) {
 	timings.BinaryPoll = 20 * time.Millisecond
 	done := make(chan error, 1)
 	go func() {
-		done <- watchDaemonAt(srv.sockPath, stateDir, "wtest", binPath, "", false, nil, (&opsRecorder{}).ops(), timings)
+		done <- watchDaemonAt(srv.sockPath, stateDir, "wtest", binPath, "", true, false, nil, (&opsRecorder{}).ops(), timings)
 	}()
 	<-srv.subGot
 
