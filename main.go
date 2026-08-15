@@ -6,8 +6,10 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -150,6 +152,60 @@ func contextTabID() string {
 	return ctx.TabID
 }
 
+// hookLingerQuiet is how long the daemonless hook waits after the most
+// recent event for its pane before considering the stream quiet.
+// hookLingerMax caps the whole linger so a hook process for a spammy
+// pane cannot live forever.
+const (
+	hookLingerQuiet = 300 * time.Millisecond
+	hookLingerMax   = 2 * time.Second
+)
+
+// lingerPaneTitles watches pane.updated events for one pane on an
+// established subscription until this pane's events stay quiet (or the
+// cap expires), then calls apply once if anything changed. Events act
+// as a change signal only: the applier re-reads the pane under the lock,
+// so racing hooks are ordered by lock acquisition over current server state,
+// never by replaying possibly-stale event payloads.
+func lingerPaneTitles(conn net.Conn, reader *bufio.Reader, paneID string, quiet, max time.Duration,
+	apply func() error) error {
+	lingerEnd := time.Now().Add(max)
+	quietEnd := time.Now().Add(quiet)
+	pending := false
+	for {
+		deadline := quietEnd
+		if lingerEnd.Before(deadline) {
+			deadline = lingerEnd
+		}
+		_ = conn.SetReadDeadline(deadline)
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			// Quiet period elapsed, cap expired, or the stream ended
+			break
+		}
+		var ev struct {
+			Event string `json:"event"`
+			Data  struct {
+				Pane *struct {
+					PaneID string `json:"pane_id"`
+				} `json:"pane"`
+			} `json:"data"`
+		}
+		if json.Unmarshal([]byte(line), &ev) != nil || ev.Event != "pane_updated" {
+			continue
+		}
+		if ev.Data.Pane == nil || ev.Data.Pane.PaneID != paneID {
+			continue
+		}
+		pending = true
+		quietEnd = time.Now().Add(quiet)
+	}
+	if !pending {
+		return nil
+	}
+	return apply()
+}
+
 // runFast is the shell-hook path: rename just the invoking tab, right now.
 // mode "preexec" carries the typed command line (plus a "shell" marker when
 // the word is a construct and the pane's real process must be sampled); mode
@@ -183,23 +239,50 @@ func runFast(mode string, args []string) error {
 			ensureDaemon(stateDir, session)
 			return nil
 		}
-		// The delay lets herdr ingest the title escape the shell emits around
-		// this same prompt. Deliberately before taking the lock.
-		time.Sleep(200 * time.Millisecond)
+		// Subscribe before reading to ensure we don't miss any events. Events
+		// that overlap the read are no-ops if they're the same as the current
+		// label, and every lingering hook sees the same server-ordered stream,
+		// so racing hooks converge on the newest title.
 		sock := sessionSocketPath()
 		paneID := os.Getenv("HERDR_PANE_ID")
-		return withLock(stateDir, session, func() error {
-			// Read pane info with lock held to prevent out-of-order renames
-			// when 2 hook events fire in short succession.
-			agentKind, title, focused, ok := paneTitle(sock, paneID)
-			if !ok {
-				return nil
-			}
-			// No need to escalate here, the next hook event will retry.
-			_, err := RenameTabForTitle(sock, tabStatePath(stateDir, session),
-				tabID, paneID, agentKind, title, focused, tabs)
+		statePath := tabStatePath(stateDir, session)
+		// apply reads pane info and renames under the lock, so racing hooks
+		// always act on fresh state, and follows the fast path's rerun contract:
+		// a contender hands its work to the holder, so a rerun must be a superset
+		// of whatever the contender wanted — another hook's fresher title or a
+		// watchdog's full reconcile.
+		apply := func() error {
+			first := true
+			return withLock(stateDir, session, func() error {
+				if !first {
+					return pass("rerun", true, false)
+				}
+				first = false
+				p, ok := paneInfo(sock, paneID)
+				if !ok {
+					// Don't need to escalate here, the next hook event retries.
+					return nil
+				}
+				if p.TabID != tabID {
+					// The pane moved out of this tab mid-linger, its title no
+					// longer names this tab, and its new tab is not ours to touch.
+					return nil
+				}
+				_, err := RenameTabForTitle(sock, statePath,
+					tabID, paneID, p.Agent, p.Title, p.Focused, tabs)
+				return err
+			})
+		}
+		conn, reader, subErr := subscribeEvents(sock, []string{"pane.updated"}, hookLingerMax)
+		if err := apply(); err != nil {
 			return err
-		})
+		}
+		if subErr != nil {
+			// Lingering is best-effort, so just exit if we can't subscribe.
+			return nil
+		}
+		defer conn.Close()
+		return lingerPaneTitles(conn, reader, paneID, hookLingerQuiet, hookLingerMax, apply)
 	}
 
 	var prog, cmdline string

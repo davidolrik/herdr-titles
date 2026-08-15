@@ -24,7 +24,7 @@ type fakeAPI struct {
 	tabLabels     map[string]string          // tab.get labels
 	tabPanes      map[string]int             // tab.get pane_count (default 1)
 	tabUnfocused  map[string]bool            // tab.get focused=false when set
-	paneTitles    map[string][2]string       // pane.get {agent, terminal_title_stripped}
+	paneTitles    map[string][3]string       // pane.get {tab_id, agent, terminal_title_stripped}
 	paneUnfocused map[string]bool            // pane.get focused=false when set
 	processInfos  map[string]json.RawMessage // pane_id -> process_info payload
 	titleSets     []string
@@ -49,7 +49,7 @@ func newFakeAPI(t *testing.T) *fakeAPI {
 		tabLabels:     map[string]string{},
 		tabPanes:      map[string]int{},
 		tabUnfocused:  map[string]bool{},
-		paneTitles:    map[string][2]string{},
+		paneTitles:    map[string][3]string{},
 		paneUnfocused: map[string]bool{},
 		processInfos:  map[string]json.RawMessage{},
 	}
@@ -162,8 +162,9 @@ func (f *fakeAPI) serve() {
 					return
 				}
 				pane, _ := json.Marshal(map[string]any{
-					"pane_id": p.PaneID, "agent": info[0], "terminal_title_stripped": info[1],
-					"focused": !f.paneUnfocused[p.PaneID],
+					"pane_id": p.PaneID, "tab_id": info[0], "agent": info[1],
+					"terminal_title_stripped": info[2],
+					"focused":                 !f.paneUnfocused[p.PaneID],
 				})
 				reply(`{"type":"pane_info","pane":` + string(pane) + `}`)
 			case "pane.process_info":
@@ -203,12 +204,12 @@ func (f *fakeAPI) setTab(tabID, label string) {
 	f.tabLabels[tabID] = label
 }
 
-// setPaneTitle registers a pane.get answer: its agent kind ("" for a plain
-// pane) and stripped terminal title.
-func (f *fakeAPI) setPaneTitle(paneID, agent, title string) {
+// setPaneTitle registers a pane.get answer: the pane's current tab, its
+// agent kind ("" for a plain pane), and stripped terminal title.
+func (f *fakeAPI) setPaneTitle(paneID, tabID, agent, title string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.paneTitles[paneID] = [2]string{agent, title}
+	f.paneTitles[paneID] = [3]string{tabID, agent, title}
 }
 
 // setPaneUnfocused makes pane.get report the pane as not globally focused.

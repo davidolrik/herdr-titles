@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fixtureSnapshotResult loads testdata/snapshot.json (a full CLI-era
@@ -170,6 +173,139 @@ func TestInitSubcommand(t *testing.T) {
 	}
 }
 
+func TestLingerPaneTitles(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	reader := bufio.NewReader(client)
+
+	applies := 0
+	apply := func() error {
+		applies++
+		return nil
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- lingerPaneTitles(client, reader, "w1:p1",
+			400*time.Millisecond, 5*time.Second, apply)
+	}()
+
+	write := func(s string) {
+		t.Helper()
+		if _, err := server.Write([]byte(s + "\n")); err != nil {
+			t.Errorf("write: %v", err)
+		}
+	}
+	// Every event resets the quiet window; when it finally elapses, a single
+	// apply fires — events are only a change signal, so a burst (including a
+	// fresh subscription's history replay) collapses into one re-read.
+	write(`{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":"w1:p1","agent":"","focused":true,"terminal_title_stripped":"stale replay"}}}`)
+	write(`{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":"w9:p9","agent":"","focused":true,"terminal_title_stripped":"other pane"}}}`)
+	write(`not json`)
+	write(`{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":"w1:p1","agent":"","focused":true,"terminal_title_stripped":"one"}}}`)
+	time.Sleep(150 * time.Millisecond) // < quiet: the window resets, same linger
+	write(`{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":"w1:p1","agent":"claude","focused":false,"terminal_title_stripped":"two"}}}`)
+
+	select {
+	case err := <-done: // the quiet window elapses with nothing more to read
+		if err != nil {
+			t.Fatalf("linger: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("linger did not end on a quiet stream")
+	}
+	if applies != 1 {
+		t.Fatalf("applies = %d, want exactly 1 coalesced apply", applies)
+	}
+}
+
+// Another pane's events neither trigger an apply nor extend the quiet
+// window: a chatty neighbor must not hold this pane's linger open.
+func TestLingerPaneTitlesIgnoresOtherPanes(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	reader := bufio.NewReader(client)
+
+	applies := 0
+	start := time.Now()
+	done := make(chan error, 1)
+	go func() {
+		done <- lingerPaneTitles(client, reader, "w1:p1",
+			200*time.Millisecond, 10*time.Second, func() error { applies++; return nil })
+	}()
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		other := `{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":"w9:p9","agent":"","focused":true,"terminal_title_stripped":"other"}}}` + "\n"
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_ = server.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
+			if _, err := server.Write([]byte(other)); err != nil {
+				return
+			}
+			time.Sleep(40 * time.Millisecond)
+		}
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("linger: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("linger did not end while another pane chattered")
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("another pane's chatter extended the quiet window: %v", elapsed)
+	}
+	if applies != 0 {
+		t.Fatalf("applies = %d, want none for another pane's events", applies)
+	}
+}
+
+// The hard cap ends the linger even when events keep flowing — a
+// title-spamming pane must not cause hook processes to live forever.
+func TestLingerPaneTitlesCap(t *testing.T) {
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	reader := bufio.NewReader(client)
+
+	done := make(chan error, 1)
+	go func() {
+		done <- lingerPaneTitles(client, reader, "w1:p1", time.Second, 200*time.Millisecond,
+			func() error { return nil })
+	}()
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		ev := `{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":"w1:p1","agent":"","focused":true,"terminal_title_stripped":"spam"}}}` + "\n"
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_ = server.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
+			if _, err := server.Write([]byte(ev)); err != nil {
+				return
+			}
+			time.Sleep(40 * time.Millisecond)
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("cap did not end the linger under constant events")
+	}
+}
+
 func TestFastPath(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "herdr-titles")
@@ -276,7 +412,7 @@ tabs {
 	if err := os.WriteFile(filepath.Join(configDir, "config.hcl"), []byte(noDaemonConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	api.setPaneTitle("w1:p1", "", "make -j all")
+	api.setPaneTitle("w1:p1", "w1:t1", "", "make -j all")
 	run("precmd", "fish")
 	_, renames, _ = api.recorded()
 	if len(renames) != before+1 || renames[before] != "w1:t1=make -j all" {
@@ -288,7 +424,7 @@ tabs {
 	// A hook event from an unfocused pane must not cause a rename.
 	api.setPaneUnfocused("w1:p1")
 	api.setTabShape("w1:t1", 2, true)
-	api.setPaneTitle("w1:p1", "", "sneaky background title")
+	api.setPaneTitle("w1:p1", "w1:t1", "", "sneaky background title")
 	run("precmd", "fish")
 	_, renames, _ = api.recorded()
 	if len(renames) != before+1 {
