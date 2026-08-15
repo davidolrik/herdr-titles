@@ -169,15 +169,33 @@ func runFast(mode string, args []string) error {
 	}
 
 	// When using terminal titles, a process-derived rename would only fight
-	// the title the shell is about to set, so the hook becomes no-op and
-	// only revives a dead daemon if needed.
+	// the title the shell is about to set: the daemon's pane.updated stream
+	// owns these panes, so the hook just revives it when dead. With the
+	// daemon disabled by watch_titles=false, the hook keeps just the focused
+	// tab up to date, and leaves the rest to the watchdog events' full passes.
 	if tabs.TerminalTitles {
 		stateDir := pluginStateDir()
 		if err := os.MkdirAll(stateDir, 0o755); err != nil {
 			return err
 		}
-		ensureDaemon(stateDir, envOr("HERDR_SESSION", "default"))
-		return nil
+		session := envOr("HERDR_SESSION", "default")
+		if tabs.WatchTitles {
+			ensureDaemon(stateDir, session)
+			return nil
+		}
+		// The delay lets herdr ingest the title escape the shell emits around
+		// this same prompt. Deliberately before taking the lock.
+		time.Sleep(200 * time.Millisecond)
+		sock := sessionSocketPath()
+		paneID := os.Getenv("HERDR_PANE_ID")
+		agentKind, title, ok := paneTitle(sock, paneID)
+		if !ok {
+			return nil
+		}
+		return withLock(stateDir, session, func() error {
+			return RenameTabForTitle(sock, tabStatePath(stateDir, session),
+				tabID, paneID, agentKind, title, true, tabs)
+		})
 	}
 
 	var prog, cmdline string

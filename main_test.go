@@ -242,11 +242,12 @@ func TestFastPath(t *testing.T) {
 		t.Fatalf("disabled tabs still renamed: %v", renames)
 	}
 
-	// terminal titles own the tab, the hook must not rename, but it must
-	// still probe for a dead daemon. daemonAlive's O_CREATE open leaves
-	// the lock file behind, so its reappearance proves the probe ran.
+	// terminal titles with the daemon (watch_titles defaults true): the hook
+	// must not rename, but it must still probe for a dead daemon. daemonAlive's
+	// O_CREATE open leaves the lock file behind, so its reappearance proves the
+	// probe ran.
 	if err := os.WriteFile(filepath.Join(configDir, "config.hcl"),
-		[]byte("template = \"x\"\ntabs {\n  terminal_titles = true\n  watch_titles = false\n}\n"), 0o644); err != nil {
+		[]byte("template = \"x\"\ntabs { terminal_titles = true }\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	lockPath := filepath.Join(stateDir, "watch.lock.fastsess")
@@ -261,4 +262,26 @@ func TestFastPath(t *testing.T) {
 	if _, err := os.Stat(lockPath); err != nil {
 		t.Errorf("terminal-titles fast path skipped the daemon probe: %v", err)
 	}
+
+	// terminal titles without the daemon (watch_titles=false): the hook is
+	// the only live naming path, so it keeps just the focused tab up to
+	// date, leaving the rest to the watchdog events' full passes.
+	noDaemonConfig := `
+template = "x"
+tabs {
+  terminal_titles = true
+  watch_titles    = false
+}
+`
+	if err := os.WriteFile(filepath.Join(configDir, "config.hcl"), []byte(noDaemonConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	api.setPaneTitle("w1:p1", "", "make -j all")
+	run("precmd", "fish")
+	_, renames, _ = api.recorded()
+	if len(renames) != before+1 || renames[before] != "w1:t1=make -j all" {
+		t.Fatalf("hook title rename => %v, want trailing w1:t1=make -j all", renames)
+	}
+	// No snapshot is configured on the fake, so a full reconcile would have
+	// failed the run outright — the rename proves the path stayed targeted.
 }
