@@ -96,23 +96,30 @@ func paneProgram(sockPath, paneID string) (prog, cmdline string, err error) {
 	return "", "", fmt.Errorf("pane.process_info %s: no group leader", paneID)
 }
 
-// tabLabel fetches a tab's current label. ok is false when the call fails or
-// returns no tab — a failed get must NOT look like an empty label, which
-// would read as a placeholder and clobber a hand-picked name.
-func tabLabel(sockPath, tabID string) (string, bool) {
+// tabInfo fetches a tab's current label, pane count, and whether it is the
+// globally focused tab. ok=false when the call fails or returns no tab.
+func tabInfo(sockPath, tabID string) (label string, paneCount int, focused, ok bool) {
 	result, err := apiRequest(sockPath, "tab.get", map[string]string{"tab_id": tabID})
 	if err != nil {
-		return "", false
+		return "", 0, false, false
 	}
 	var payload struct {
 		Tab *struct {
-			Label string `json:"label"`
+			Label     string `json:"label"`
+			PaneCount int    `json:"pane_count"`
+			Focused   bool   `json:"focused"`
 		} `json:"tab"`
 	}
 	if err := json.Unmarshal(result, &payload); err != nil || payload.Tab == nil {
-		return "", false
+		return "", 0, false, false
 	}
-	return payload.Tab.Label, true
+	return payload.Tab.Label, payload.Tab.PaneCount, payload.Tab.Focused, true
+}
+
+// tabLabel fetches just a tab's current label (the shell-hook fast path).
+func tabLabel(sockPath, tabID string) (string, bool) {
+	label, _, _, ok := tabInfo(sockPath, tabID)
+	return label, ok
 }
 
 // renameTab issues the rename; failures are logged by the caller's exit path
@@ -150,6 +157,13 @@ func computeTabName(sockPath string, tab Tab, snap *Snapshot, cfg *TabsConfig) (
 	if name, ok := titleTabName(agentKind, title, cfg); ok {
 		return name, true
 	}
+	// If we can't determine a title, only fetch foreground program info if
+	// the tab is focused or contains exactly 1 pane, otherwise we can't
+	// determine which pane should own the tab's name reliably, and should
+	// leave the old name alone to avoid bouncing between panes.
+	if !tab.Focused && tab.PaneCount > 1 {
+		return "", false
+	}
 	prog, cmdline, err := paneProgram(sockPath, paneID)
 	if err != nil || prog == "" {
 		return "", false
@@ -162,9 +176,10 @@ func computeTabName(sockPath string, tab Tab, snap *Snapshot, cfg *TabsConfig) (
 // payload. An empty agentKind means a plain pane (shell/program title);
 // otherwise the title is an agent session title. An empty title is a clear:
 // the tab falls back to the pane's foreground program name — the one case
-// here that needs a process-info call. The caller holds the per-session
-// lock. An opted-out tab is a no-op.
-func RenameTabForTitle(sockPath, statePath, tabID, paneID, agentKind, title string, cfg *TabsConfig) error {
+// here that needs a process-info call. Don't rename a multi-pane tab if we
+// don't know the focused pane, to avoid bouncing between panes. The caller
+// holds the per-session lock. An opted-out tab is a no-op.
+func RenameTabForTitle(sockPath, statePath, tabID, paneID, agentKind, title string, focusKnown bool, cfg *TabsConfig) error {
 	if !cfg.Enabled {
 		return nil
 	}
@@ -172,10 +187,23 @@ func RenameTabForTitle(sockPath, statePath, tabID, paneID, agentKind, title stri
 		// Not using terminal title as tab name
 		return nil
 	}
-	name, ok := titleTabName(agentKind, title, cfg)
+	label, paneCount, tabFocused, ok := tabInfo(sockPath, tabID)
 	if !ok {
+		return nil
+	}
+	if !focusKnown && paneCount > 1 {
+		// Can't determine focused pane, don't rename here. A future full
+		// pass will take care of it when the tab is focused or the layout's
+		// focused pane becomes known.
+		return nil
+	}
+	name, titled := titleTabName(agentKind, title, cfg)
+	if !titled {
 		// Title was explicitly cleared, fall back to the pane's foreground
-		// program name.
+		// program name except for background multi-pane tabs.
+		if !tabFocused && paneCount > 1 {
+			return nil
+		}
 		prog, cmdline, err := paneProgram(sockPath, paneID)
 		if err != nil || prog == "" {
 			return nil // process-info blip: leave the tab alone
@@ -184,10 +212,6 @@ func RenameTabForTitle(sockPath, statePath, tabID, paneID, agentKind, title stri
 		if name == "" && !cfg.HideShell {
 			return nil
 		}
-	}
-	label, ok := tabLabel(sockPath, tabID)
-	if !ok {
-		return nil
 	}
 	states := LoadTabStates(statePath)
 	if os.Getenv("HWT_DEBUG") != "" {

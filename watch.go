@@ -47,6 +47,9 @@ type paneEvent struct {
 	TabID  string
 	Agent  string
 	Title  string
+	// FocusKnown indicates whether the classifier has verified that this
+	// pane is its tab's remembered focus.
+	FocusKnown bool
 }
 
 type trigger struct {
@@ -196,11 +199,13 @@ func classifyEvent(line []byte, st *classifyState, terminalTitles bool) *trigger
 			return nil
 		}
 		st.lastTitles[p.PaneID] = p.Title
-		if focus := st.tabFocus[p.TabID]; focus != "" && focus != p.PaneID {
+		focus := st.tabFocus[p.TabID]
+		if focus != "" && focus != p.PaneID {
 			return nil // not the pane the tab is named after
 		}
 		return &trigger{kind: triggerRename, pane: paneEvent{
 			PaneID: p.PaneID, TabID: p.TabID, Agent: p.Agent, Title: p.Title,
+			FocusKnown: focus == p.PaneID,
 		}}
 	case "pane_focused":
 		// The payload has no tab_id; attribute via the tracked pane->tab map.
@@ -732,7 +737,7 @@ func runWatchDetached() error {
 				return RenameTabForTitle(
 					sockPath,
 					tabStatePath(stateDir, session),
-					p.TabID, p.PaneID, p.Agent, p.Title, cfg.Tabs)
+					p.TabID, p.PaneID, p.Agent, p.Title, p.FocusKnown, cfg.Tabs)
 			})
 		},
 	}

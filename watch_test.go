@@ -92,17 +92,18 @@ func TestClassifyEventFocusGate(t *testing.T) {
 	if tr := classifyEvent([]byte(paneEv("w1:p2", "background pane title")), st, true); tr != nil {
 		t.Errorf("recorded title replayed after focus switch => %+v, want nil", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("w1:p2", "fresh title")), st, true); tr == nil || tr.kind != triggerRename {
-		t.Errorf("newly focused pane's new title => %+v, want rename", tr)
+	if tr := classifyEvent([]byte(paneEv("w1:p2", "fresh title")), st, true); tr == nil || tr.kind != triggerRename || !tr.pane.FocusKnown {
+		t.Errorf("newly focused pane's new title => %+v, want rename with FocusKnown", tr)
 	}
 	if tr := classifyEvent([]byte(paneEv("w1:p1", "focused pane title 2")), st, true); tr != nil {
 		t.Errorf("formerly focused pane => %+v, want nil", tr)
 	}
 
-	// A pane in a tab the classifier knows nothing about stays permissive.
+	// A pane in a tab the classifier knows nothing about is passed through
+	// unverified; the rename op resolves it via the tab's pane count.
 	unknown := `{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":"w9:p9","tab_id":"w9:t9","agent":"","terminal_title_stripped":"new"}}}`
-	if tr := classifyEvent([]byte(unknown), st, true); tr == nil || tr.kind != triggerRename {
-		t.Errorf("unknown tab => %+v, want rename (permissive)", tr)
+	if tr := classifyEvent([]byte(unknown), st, true); tr == nil || tr.kind != triggerRename || tr.pane.FocusKnown {
+		t.Errorf("unknown tab => %+v, want rename without FocusKnown", tr)
 	}
 }
 
