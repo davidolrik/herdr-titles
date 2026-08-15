@@ -143,9 +143,10 @@ prompt never blocks, and stay registered across re-sourcing. On bash they
 cooperate with bash-preexec/ble.sh/atuin instead of clobbering the DEBUG
 trap; see the comments in `shell/hook.bash`.
 
-With `tabs { terminal_titles = true }`, you don't really need the hooks.
-They become no-ops to avoid fighting with the terminal title your shell
-is about to set. They will only revive a dead watch daemon if needed.
+With `tabs { terminal_titles = true }`, the hooks will only perform renames
+if `watch_titles` is disabled, otherwise you don't really need them since
+they will only revive a dead daemon as needed, but that happens via other
+means anyway.
 
 ## The watch daemon
 

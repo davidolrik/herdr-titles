@@ -122,6 +122,25 @@ func tabLabel(sockPath, tabID string) (string, bool) {
 	return label, ok
 }
 
+// paneTitle fetches a pane's agent kind and stripped terminal title (the
+// shell-hook path under terminal_titles without a daemon).
+func paneTitle(sockPath, paneID string) (agentKind, title string, ok bool) {
+	result, err := apiRequest(sockPath, "pane.get", map[string]string{"pane_id": paneID})
+	if err != nil {
+		return "", "", false
+	}
+	var payload struct {
+		Pane *struct {
+			Agent string `json:"agent"`
+			Title string `json:"terminal_title_stripped"`
+		} `json:"pane"`
+	}
+	if err := json.Unmarshal(result, &payload); err != nil || payload.Pane == nil {
+		return "", "", false
+	}
+	return payload.Pane.Agent, payload.Pane.Title, true
+}
+
 // renameTab issues the rename; failures are logged by the caller's exit path
 // only in aggregate — a rename race is recovered by the next idempotent pass.
 func renameTab(sockPath, tabID, label string) {

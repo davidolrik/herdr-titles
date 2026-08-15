@@ -24,6 +24,7 @@ type fakeAPI struct {
 	tabLabels    map[string]string          // tab.get labels
 	tabPanes     map[string]int             // tab.get pane_count (default 1)
 	tabUnfocused map[string]bool            // tab.get focused=false when set
+	paneTitles   map[string][2]string       // pane.get {agent, terminal_title_stripped}
 	processInfos map[string]json.RawMessage // pane_id -> process_info payload
 	titleSets    []string
 	renames      []string
@@ -47,6 +48,7 @@ func newFakeAPI(t *testing.T) *fakeAPI {
 		tabLabels:    map[string]string{},
 		tabPanes:     map[string]int{},
 		tabUnfocused: map[string]bool{},
+		paneTitles:   map[string][2]string{},
 		processInfos: map[string]json.RawMessage{},
 	}
 	f.ln, err = net.Listen("unix", f.sockPath)
@@ -147,6 +149,20 @@ func (f *fakeAPI) serve() {
 				default:
 					reply(`{"type":"notification_show","shown":true,"reason":"shown"}`)
 				}
+			case "pane.get":
+				var p struct {
+					PaneID string `json:"pane_id"`
+				}
+				_ = json.Unmarshal(req.Params, &p)
+				info, ok := f.paneTitles[p.PaneID]
+				if !ok {
+					fail("not_found", "no such pane")
+					return
+				}
+				pane, _ := json.Marshal(map[string]string{
+					"pane_id": p.PaneID, "agent": info[0], "terminal_title_stripped": info[1],
+				})
+				reply(`{"type":"pane_info","pane":` + string(pane) + `}`)
 			case "pane.process_info":
 				var p struct {
 					PaneID string `json:"pane_id"`
@@ -182,6 +198,14 @@ func (f *fakeAPI) setTab(tabID, label string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.tabLabels[tabID] = label
+}
+
+// setPaneTitle registers a pane.get answer: its agent kind ("" for a plain
+// pane) and stripped terminal title.
+func (f *fakeAPI) setPaneTitle(paneID, agent, title string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.paneTitles[paneID] = [2]string{agent, title}
 }
 
 // setTabShape overrides tab.get's pane_count and focused for one tab
