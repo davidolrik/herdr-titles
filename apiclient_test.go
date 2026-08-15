@@ -22,6 +22,8 @@ type fakeAPI struct {
 	mu           sync.Mutex
 	snapshot     json.RawMessage            // result for session.snapshot
 	tabLabels    map[string]string          // tab.get labels
+	tabPanes     map[string]int             // tab.get pane_count (default 1)
+	tabUnfocused map[string]bool            // tab.get focused=false when set
 	processInfos map[string]json.RawMessage // pane_id -> process_info payload
 	titleSets    []string
 	renames      []string
@@ -43,6 +45,8 @@ func newFakeAPI(t *testing.T) *fakeAPI {
 	f := &fakeAPI{
 		sockPath:     filepath.Join(dir, "herdr.sock"),
 		tabLabels:    map[string]string{},
+		tabPanes:     map[string]int{},
+		tabUnfocused: map[string]bool{},
 		processInfos: map[string]json.RawMessage{},
 	}
 	f.ln, err = net.Listen("unix", f.sockPath)
@@ -107,9 +111,16 @@ func (f *fakeAPI) serve() {
 					fail("not_found", "no such tab")
 					return
 				}
+				paneCount := f.tabPanes[p.TabID]
+				if paneCount == 0 {
+					paneCount = 1
+				}
 				// json.Marshal, not %q: Go quoting writes PUA glyphs as \U
 				// escapes, which are not valid JSON.
-				tab, _ := json.Marshal(map[string]string{"tab_id": p.TabID, "label": label})
+				tab, _ := json.Marshal(map[string]any{
+					"tab_id": p.TabID, "label": label,
+					"pane_count": paneCount, "focused": !f.tabUnfocused[p.TabID],
+				})
 				reply(`{"type":"tab_info","tab":` + string(tab) + `}`)
 			case "tab.rename":
 				var p struct {
@@ -171,6 +182,15 @@ func (f *fakeAPI) setTab(tabID, label string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.tabLabels[tabID] = label
+}
+
+// setTabShape overrides tab.get's pane_count and focused for one tab
+// (defaults: single pane, focused).
+func (f *fakeAPI) setTabShape(tabID string, paneCount int, focused bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.tabPanes[tabID] = paneCount
+	f.tabUnfocused[tabID] = !focused
 }
 
 // setProcessInfoArgv registers a process whose argv differs from its argv0 —

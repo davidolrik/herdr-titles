@@ -29,10 +29,11 @@ mysession : Work @ HQ › myproject › 1 › ×2 ✓1
   [qu8n/herdr-automatic-rename](https://github.com/qu8n/herdr-automatic-rename)
   (MIT), minus the jump-key numbering.
 - **Terminal titles** — with `tabs { terminal_titles = true }`, a pane whose
-  shell (or program) sets a terminal title names its tab after that title.
-  The foreground program name remains the fallback (and the default). In a
-  background multi-pane tab, the name follows the last-focused pane, so it
-  remains consistent when you switch to that tab again.
+  shell (or program) sets a terminal title names its tab after that title,
+  with the foreground program name as fallback (should rarely happen if your
+  shell maintains the terminal title reliably). A background multi-pane tab
+  follows the last-focused pane's title when such a pane known, otherwise
+  its name is only updated when it gains focus again.
 - **Live agent session titles** — a tab hosting a coding agent is named
   after the agent's session title instead of its terminal title or process name
   (`󰚩 Fix flaky integration test`, not `󰚩 claude`), and follows renames —
