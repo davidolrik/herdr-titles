@@ -634,7 +634,14 @@ func watchDaemonAt(sockPath, stateDir, session, binPath string, agentTitles, ter
 			default:
 			}
 		}
-		_ = conn.SetReadDeadline(time.Now().Add(timings.ReadDeadline))
+		readDeadline := timings.ReadDeadline
+		if recoverFull {
+			// Still undelivered: shorten the read, or a stream going quiet
+			// right after the drop would delay the escalated full by the
+			// whole ReadDeadline instead of roughly the rate floor.
+			readDeadline = timings.FullFloor
+		}
+		_ = conn.SetReadDeadline(time.Now().Add(readDeadline))
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			if isTimeout(err) && pingSocket(sockPath, socketTimeout) {
