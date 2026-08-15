@@ -19,17 +19,18 @@ type fakeAPI struct {
 	sockPath string
 	ln       net.Listener
 
-	mu           sync.Mutex
-	snapshot     json.RawMessage            // result for session.snapshot
-	tabLabels    map[string]string          // tab.get labels
-	tabPanes     map[string]int             // tab.get pane_count (default 1)
-	tabUnfocused map[string]bool            // tab.get focused=false when set
-	paneTitles   map[string][2]string       // pane.get {agent, terminal_title_stripped}
-	processInfos map[string]json.RawMessage // pane_id -> process_info payload
-	titleSets    []string
-	renames      []string
-	snapshots    int
-	infoReqs     int
+	mu            sync.Mutex
+	snapshot      json.RawMessage            // result for session.snapshot
+	tabLabels     map[string]string          // tab.get labels
+	tabPanes      map[string]int             // tab.get pane_count (default 1)
+	tabUnfocused  map[string]bool            // tab.get focused=false when set
+	paneTitles    map[string][2]string       // pane.get {agent, terminal_title_stripped}
+	paneUnfocused map[string]bool            // pane.get focused=false when set
+	processInfos  map[string]json.RawMessage // pane_id -> process_info payload
+	titleSets     []string
+	renames       []string
+	snapshots     int
+	infoReqs      int
 
 	notifications []string // recorded "title|body" per notification.show
 	notifBusy     int      // answer "busy" this many times before showing
@@ -44,12 +45,13 @@ func newFakeAPI(t *testing.T) *fakeAPI {
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	f := &fakeAPI{
-		sockPath:     filepath.Join(dir, "herdr.sock"),
-		tabLabels:    map[string]string{},
-		tabPanes:     map[string]int{},
-		tabUnfocused: map[string]bool{},
-		paneTitles:   map[string][2]string{},
-		processInfos: map[string]json.RawMessage{},
+		sockPath:      filepath.Join(dir, "herdr.sock"),
+		tabLabels:     map[string]string{},
+		tabPanes:      map[string]int{},
+		tabUnfocused:  map[string]bool{},
+		paneTitles:    map[string][2]string{},
+		paneUnfocused: map[string]bool{},
+		processInfos:  map[string]json.RawMessage{},
 	}
 	f.ln, err = net.Listen("unix", f.sockPath)
 	if err != nil {
@@ -159,8 +161,9 @@ func (f *fakeAPI) serve() {
 					fail("not_found", "no such pane")
 					return
 				}
-				pane, _ := json.Marshal(map[string]string{
+				pane, _ := json.Marshal(map[string]any{
 					"pane_id": p.PaneID, "agent": info[0], "terminal_title_stripped": info[1],
+					"focused": !f.paneUnfocused[p.PaneID],
 				})
 				reply(`{"type":"pane_info","pane":` + string(pane) + `}`)
 			case "pane.process_info":
@@ -206,6 +209,13 @@ func (f *fakeAPI) setPaneTitle(paneID, agent, title string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.paneTitles[paneID] = [2]string{agent, title}
+}
+
+// setPaneUnfocused makes pane.get report the pane as not globally focused.
+func (f *fakeAPI) setPaneUnfocused(paneID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.paneUnfocused[paneID] = true
 }
 
 // setTabShape overrides tab.get's pane_count and focused for one tab
