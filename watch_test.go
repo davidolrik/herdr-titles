@@ -41,8 +41,11 @@ func TestClassifyEvent(t *testing.T) {
 	if tr := classifyEvent([]byte(paneEv("", "shell title")), st, true); tr != nil {
 		t.Errorf("unchanged non-agent title => %+v, want nil", tr)
 	}
+	if tr := classifyEvent([]byte(paneEv("", "")), st, true); tr == nil || tr.kind != triggerRename || tr.pane.Title != "" {
+		t.Errorf("cleared title => %+v, want empty-title rename (cancel)", tr)
+	}
 	if tr := classifyEvent([]byte(paneEv("", "")), st, true); tr != nil {
-		t.Errorf("cleared title => %+v, want nil (no name to apply)", tr)
+		t.Errorf("still-cleared title => %+v, want nil (no change)", tr)
 	}
 	if tr := classifyEvent([]byte(paneEv("", "shell title")), st, true); tr == nil || tr.kind != triggerRename {
 		t.Errorf("title set again after clearing => %+v, want rename", tr)
@@ -183,6 +186,20 @@ func TestSchedulerCoalescesAndScopes(t *testing.T) {
 	_, titles, _ = rec.snapshot()
 	if len(titles) == 0 || !titles[len(titles)-1] {
 		t.Fatalf("env change => titles=%v, want trailing bypass=true", titles)
+	}
+
+	// A set-then-clear inside one debounce window: the clear overwrites the
+	// queued set, so only the empty-title (fallback) rename reaches the op.
+	fullsBefore, _, renamesBefore := rec.snapshot()
+	triggers <- trigger{kind: triggerRename, pane: paneEvent{PaneID: "p", TabID: "t1", Title: "transient"}}
+	triggers <- trigger{kind: triggerRename, pane: paneEvent{PaneID: "p", TabID: "t1", Title: ""}}
+	time.Sleep(80 * time.Millisecond)
+	fulls, _, renames = rec.snapshot()
+	if got := renames[len(renamesBefore):]; len(got) != 1 || got[0] != "t1=" {
+		t.Fatalf("set-then-clear => %v, want the single empty-title rename", got)
+	}
+	if fulls != fullsBefore {
+		t.Fatalf("set-then-clear escalated to a full pass: %d -> %d", fullsBefore, fulls)
 	}
 
 	close(stop)
