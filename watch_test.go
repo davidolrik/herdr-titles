@@ -137,6 +137,31 @@ func TestClassifyEventPrunesClosedPanes(t *testing.T) {
 	}
 }
 
+// A rename op reporting a transient error escalates to a full pass —
+// the title event that carried the rename will not be re-emitted, so
+// nothing else would recover it.
+func TestSchedulerEscalatesBlippedRenames(t *testing.T) {
+	rec := &opsRecorder{}
+	ops := rec.ops()
+	inner := ops.rename
+	ops.rename = func(p paneEvent) bool { inner(p); return true }
+	triggers := make(chan trigger, 16)
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() { runScheduler(triggers, ops, testTimings(), stop); close(done) }()
+
+	triggers <- trigger{kind: triggerRename, pane: paneEvent{PaneID: "p", TabID: "t1", Title: "A"}}
+	time.Sleep(120 * time.Millisecond)
+	fulls, _, renames := rec.snapshot()
+	if len(renames) != 1 || fulls != 1 {
+		t.Fatalf("failed rename => renames=%v fulls=%d, want 1 rename then 1 full", renames, fulls)
+	}
+
+	close(stop)
+	close(triggers)
+	<-done
+}
+
 // A rename dropped on a saturated scheduler must roll back its dedup commit:
 // herdr only emits on title change, so a committed-but-unsent title (or a
 // later change back to it) would otherwise be suppressed forever.
@@ -337,10 +362,11 @@ func (r *opsRecorder) ops() watchOps {
 			r.titles = append(r.titles, bypass)
 			r.mu.Unlock()
 		},
-		rename: func(p paneEvent) {
+		rename: func(p paneEvent) bool {
 			r.mu.Lock()
 			r.renames = append(r.renames, p.TabID+"="+p.Title)
 			r.mu.Unlock()
+			return false
 		},
 	}
 }

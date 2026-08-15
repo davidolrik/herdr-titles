@@ -197,39 +197,45 @@ func computeTabName(sockPath string, tab Tab, snap *Snapshot, cfg *TabsConfig) (
 // the tab falls back to the pane's foreground program name — the one case
 // here that needs a process-info call. Don't rename a multi-pane tab if we
 // don't know the focused pane, to avoid bouncing between panes. The caller
-// holds the per-session lock. An opted-out tab is a no-op.
-func RenameTabForTitle(sockPath, statePath, tabID, paneID, agentKind, title string, focusKnown bool, cfg *TabsConfig) error {
+// holds the per-session lock. An opted-out tab is a no-op. retryFull=true
+// means a transient error (tab.get or process-info) prevented a rename that
+// was due — the caller should schedule a full pass, because the event that
+// carried this title will not be resent.
+func RenameTabForTitle(sockPath, statePath, tabID, paneID, agentKind, title string, focusKnown bool, cfg *TabsConfig) (retryFull bool, err error) {
 	if !cfg.Enabled {
-		return nil
+		return false, nil
 	}
 	if !cfg.TerminalTitles && (!cfg.AgentTitles || agentKind == "") {
 		// Not using terminal title as tab name
-		return nil
+		return false, nil
 	}
 	label, paneCount, tabFocused, ok := tabInfo(sockPath, tabID)
 	if !ok {
-		return nil
+		// The event's dedup entry is already committed and herdr will not
+		// re-emit an unchanged title, so the caller must escalate to a full
+		// pass, or the rename is lost.
+		return true, nil
 	}
 	if !focusKnown && paneCount > 1 {
 		// Can't determine focused pane, don't rename here. A future full
 		// pass will take care of it when the tab is focused or the layout's
 		// focused pane becomes known.
-		return nil
+		return false, nil
 	}
 	name, titled := titleTabName(agentKind, title, cfg)
 	if !titled {
 		// Title was explicitly cleared, fall back to the pane's foreground
 		// program name except for background multi-pane tabs.
 		if !tabFocused && paneCount > 1 {
-			return nil
+			return false, nil
 		}
 		prog, cmdline, err := paneProgram(sockPath, paneID)
 		if err != nil || prog == "" {
-			return nil // process-info blip: leave the tab alone
+			return true, nil // process-info blip: escalate
 		}
 		name = FormatTabName(prog, cmdline, cfg)
 		if name == "" && !cfg.HideShell {
-			return nil
+			return false, nil
 		}
 	}
 	states := LoadTabStates(statePath)
@@ -237,13 +243,13 @@ func RenameTabForTitle(sockPath, statePath, tabID, paneID, agentKind, title stri
 		fmt.Fprintf(os.Stderr, "DEBUG rename tab=%s computed=%q label=%q state=%+v\n", tabID, name, label, states[tabID])
 	}
 	if !states.Eligible(tabID, label, name, false) {
-		return SaveTabStates(statePath, states) // Eligible may record an opt-out
+		return false, SaveTabStates(statePath, states) // Eligible may record an opt-out
 	}
 	if name != label {
 		renameTab(sockPath, tabID, name)
 	}
 	states[tabID] = TabState{Auto: name, Enabled: true}
-	return SaveTabStates(statePath, states)
+	return false, SaveTabStates(statePath, states)
 }
 
 // ReconcileTabs walks every tab once, idempotently: compute the desired
