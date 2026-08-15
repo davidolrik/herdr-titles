@@ -116,6 +116,8 @@ tabs {
   # Prefer using the terminal title (set by your shell or by programs like nvim)
   # for non-agent panes rather than the foreground process name. The substitute
   # rules and max_name_len above apply to the title, but no icons are added.
+  # You won't need to install the shell hooks since they become no-op and will
+  # only revive the daemon.
   terminal_titles = false
 
   # Run the per-session watch daemon. It follows agent title changes (e.g.
