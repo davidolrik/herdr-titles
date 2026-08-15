@@ -122,24 +122,30 @@ func tabLabel(sockPath, tabID string) (string, bool) {
 	return label, ok
 }
 
-// paneTitle fetches a pane's agent kind and stripped terminal title (the
-// shell-hook path under terminal_titles without a daemon).
-func paneTitle(sockPath, paneID string) (agentKind, title string, focused, ok bool) {
+// paneInfo fetches one pane's current state via pane.get (the shell-hook
+// path under terminal_titles without a daemon).
+func paneInfo(sockPath, paneID string) (Pane, bool) {
 	result, err := apiRequest(sockPath, "pane.get", map[string]string{"pane_id": paneID})
 	if err != nil {
-		return "", "", false, false
+		return Pane{}, false
 	}
 	var payload struct {
 		Pane *struct {
+			PaneID  string `json:"pane_id"`
+			TabID   string `json:"tab_id"`
 			Agent   string `json:"agent"`
 			Focused bool   `json:"focused"`
 			Title   string `json:"terminal_title_stripped"`
 		} `json:"pane"`
 	}
 	if err := json.Unmarshal(result, &payload); err != nil || payload.Pane == nil {
-		return "", "", false, false
+		return Pane{}, false
 	}
-	return payload.Pane.Agent, payload.Pane.Title, payload.Pane.Focused, true
+	p := payload.Pane
+	return Pane{
+		PaneID: p.PaneID, TabID: p.TabID, Agent: p.Agent,
+		Focused: p.Focused, Title: p.Title,
+	}, true
 }
 
 // renameTab issues the rename; failures are logged by the caller's exit path

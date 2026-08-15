@@ -27,6 +27,7 @@ type Tab struct {
 type Pane struct {
 	PaneID  string
 	TabID   string
+	Agent   string // detected agent kind, "" for a plain pane
 	Focused bool
 	Title   string // terminal_title_stripped: the pane's terminal title
 }
@@ -63,6 +64,7 @@ func decodeSnapshot(data []byte) (*Snapshot, error) {
 			Panes []struct {
 				PaneID        string `json:"pane_id"`
 				TabID         string `json:"tab_id"`
+				Agent         string `json:"agent"`
 				Focused       bool   `json:"focused"`
 				TitleStripped string `json:"terminal_title_stripped"`
 			} `json:"panes"`
@@ -113,7 +115,8 @@ func decodeSnapshot(data []byte) (*Snapshot, error) {
 	}
 	for _, p := range raw.Panes {
 		snap.Panes = append(snap.Panes, Pane{
-			PaneID: p.PaneID, TabID: p.TabID, Focused: p.Focused, Title: p.TitleStripped,
+			PaneID: p.PaneID, TabID: p.TabID, Agent: p.Agent,
+			Focused: p.Focused, Title: p.TitleStripped,
 		})
 	}
 	for _, a := range raw.Agents {
