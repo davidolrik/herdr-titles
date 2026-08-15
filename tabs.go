@@ -157,22 +157,34 @@ func computeTabName(sockPath string, tab Tab, snap *Snapshot, cfg *TabsConfig) (
 
 // RenameTabForTitle applies a pane's terminal title to its tab — the daemon's
 // targeted path for pane.updated events, which carry the new title in the
-// payload, so no process-info subprocess is needed. An empty agentKind means
-// a plain pane (shell/program title); otherwise the title is an agent session
-// title. The caller holds the per-session lock. An empty title or an
-// opted-out tab is a no-op.
-func RenameTabForTitle(sockPath, statePath, tabID, agentKind, title string, cfg *TabsConfig) error {
-	if !cfg.Enabled || title == "" {
+// payload. An empty agentKind means a plain pane (shell/program title);
+// otherwise the title is an agent session title. An empty title is a clear:
+// the tab falls back to the pane's foreground program name — the one case
+// here that needs a process-info call. The caller holds the per-session
+// lock. An opted-out tab is a no-op.
+func RenameTabForTitle(sockPath, statePath, tabID, paneID, agentKind, title string, cfg *TabsConfig) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	if !cfg.TerminalTitles && (!cfg.AgentTitles || agentKind == "") {
+		// Not using terminal title as tab name
 		return nil
 	}
 	var name string
 	switch {
+	case title == "":
+		prog, cmdline, err := paneProgram(sockPath, paneID)
+		if err != nil || prog == "" {
+			return nil // process-info blip: leave the tab alone
+		}
+		name = FormatTabName(prog, cmdline, cfg)
+		if name == "" && !cfg.HideShell {
+			return nil
+		}
 	case agentKind != "" && cfg.AgentTitles:
 		name = FormatAgentTitle(agentKind, title, cfg)
-	case cfg.TerminalTitles:
-		name = FormatTerminalTitle(title, cfg)
 	default:
-		return nil
+		name = FormatTerminalTitle(title, cfg)
 	}
 	label, ok := tabLabel(sockPath, tabID)
 	if !ok {

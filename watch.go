@@ -128,9 +128,10 @@ func (st *classifyState) seed(snap *Snapshot) {
 // titles per pane so only real changes fire. A rename trigger is raised only
 // for the pane a tab is named after (the layout's focused pane) to avoid
 // bouncing back and forth. Without terminalTitles, non-agent pane title
-// changes are dropped outright —nothing downstream would use them. A title
-// cleared to "" is recorded but fires nothing — the targeted rename path
-// has no name to apply. Unknown/garbage lines are nil.
+// changes are dropped outright — nothing downstream would use them. A title
+// cleared to "" raises an empty-title rename trigger, which overwrites any
+// queued set for the pane and renames to the fallback program name.
+// Unknown/garbage lines are nil.
 func classifyEvent(line []byte, st *classifyState, terminalTitles bool) *trigger {
 	var ev struct {
 		Event string `json:"event"`
@@ -168,9 +169,6 @@ func classifyEvent(line []byte, st *classifyState, terminalTitles bool) *trigger
 			return nil
 		}
 		st.lastTitles[p.PaneID] = p.Title
-		if p.Title == "" {
-			return nil
-		}
 		return &trigger{kind: triggerRename, pane: paneEvent{
 			PaneID: p.PaneID, TabID: p.TabID, Agent: p.Agent, Title: p.Title,
 		}}
@@ -664,7 +662,7 @@ func runWatchDetached() error {
 				return RenameTabForTitle(
 					sockPath,
 					tabStatePath(stateDir, session),
-					p.TabID, p.Agent, p.Title, cfg.Tabs)
+					p.TabID, p.PaneID, p.Agent, p.Title, cfg.Tabs)
 			})
 		},
 	}

@@ -202,6 +202,27 @@ func TestReconcileTabsTerminalTitleDisabledFallsBack(t *testing.T) {
 	}
 }
 
+func TestRenameTabForTitleClearFallsBackToProgram(t *testing.T) {
+	api := newFakeAPI(t)
+	statePath := filepath.Join(t.TempDir(), "tabstate.test.json")
+	cfg := DefaultTabsConfig()
+	cfg.ShellName = "zsh"
+	cfg.TerminalTitles = true
+	api.setTab("w1:t1", "make -j all")
+	api.setProcessInfo("w1:p1", "nvim", "nvim main.go")
+	if err := SaveTabStates(statePath, TabStates{"w1:t1": {Auto: "make -j all", Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "w1:p1", "", "", cfg); err != nil {
+		t.Fatal(err)
+	}
+	_, renames, _ := api.recorded()
+	if len(renames) != 1 || renames[0] != "w1:t1=nvim" {
+		t.Fatalf("renames = %v, want [w1:t1=nvim] (fallback to program)", renames)
+	}
+}
+
 func TestReconcileTabsBackgroundMultiPaneUntouched(t *testing.T) {
 	f := newTabsFixture(t)
 	snap := &Snapshot{
@@ -338,7 +359,7 @@ func TestRenameTabForTitleAgent(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "claude", "New title", cfg); err != nil {
+	if err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "w1:p1", "claude", "New title", cfg); err != nil {
 		t.Fatal(err)
 	}
 	_, renames, _ := api.recorded()
@@ -350,14 +371,15 @@ func TestRenameTabForTitleAgent(t *testing.T) {
 		t.Errorf("state = %+v, want owned new title", st)
 	}
 
-	// Opted-out tabs stay untouched; empty titles are ignored.
+	// Opted-out tabs stay untouched; a cleared title with no process info
+	// available (the fake has none for this pane) is a no-op blip.
 	if err := SaveTabStates(statePath, TabStates{"w1:t1": {Enabled: false}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "claude", "Another", cfg); err != nil {
+	if err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "w1:p1", "claude", "Another", cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "claude", "", cfg); err != nil {
+	if err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "w1:p1", "claude", "", cfg); err != nil {
 		t.Fatal(err)
 	}
 	_, renames, _ = api.recorded()
@@ -380,7 +402,7 @@ func TestRenameTabForTitlePlainPane(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "", "make -j all target", cfg); err != nil {
+	if err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "w1:p1", "", "make -j all target", cfg); err != nil {
 		t.Fatal(err)
 	}
 	_, renames, _ := api.recorded()
@@ -393,7 +415,7 @@ func TestRenameTabForTitlePlainPane(t *testing.T) {
 
 	// terminal_titles = false gates the plain-pane path but not the agent path.
 	cfg.TerminalTitles = false
-	if err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "", "other title", cfg); err != nil {
+	if err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "w1:p1", "", "other title", cfg); err != nil {
 		t.Fatal(err)
 	}
 	_, renames, _ = api.recorded()
@@ -405,7 +427,7 @@ func TestRenameTabForTitlePlainPane(t *testing.T) {
 	// as an ordinary terminal title (plain format, max_name_len).
 	cfg.AgentTitles = false
 	cfg.TerminalTitles = true
-	if err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "claude", "agent session name", cfg); err != nil {
+	if err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "w1:p1", "claude", "agent session name", cfg); err != nil {
 		t.Fatal(err)
 	}
 	_, renames, _ = api.recorded()
