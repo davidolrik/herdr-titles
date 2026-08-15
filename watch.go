@@ -92,10 +92,11 @@ var watchSubscriptions = []string{
 }
 
 // classifyEvent maps one event line to a trigger, tracking last stripped
-// titles per pane so only real changes fire. A title cleared to "" is
-// recorded but fires nothing — the targeted rename path has no name to
-// apply. Unknown/garbage lines are nil.
-func classifyEvent(line []byte, lastTitles map[string]string) *trigger {
+// titles per pane so only real changes fire. Without terminalTitles,
+// non-agent pane title changes are dropped outright — nothing downstream
+// would use them. A title cleared to "" is recorded but fires nothing — the
+// targeted rename path has no name to apply. Unknown/garbage lines are nil.
+func classifyEvent(line []byte, lastTitles map[string]string, terminalTitles bool) *trigger {
 	var ev struct {
 		Event string `json:"event"`
 		Data  struct {
@@ -113,7 +114,7 @@ func classifyEvent(line []byte, lastTitles map[string]string) *trigger {
 	switch ev.Event {
 	case "pane_updated":
 		p := ev.Data.Pane
-		if p == nil {
+		if p == nil || (!terminalTitles && p.Agent == "") {
 			return nil
 		}
 		if lastTitles[p.PaneID] == p.Title {
@@ -381,16 +382,17 @@ func binaryWatcher(exePath string, baseline *binaryIdentity, interval time.Durat
 
 // watchDaemon runs the daemon without binary self-restart (tests).
 func watchDaemon(sockPath, stateDir, session string, watchFiles []string, ops watchOps, timings watchTimings) error {
-	return watchDaemonAt(sockPath, stateDir, session, "", watchFiles, ops, timings)
+	return watchDaemonAt(sockPath, stateDir, session, "", true, watchFiles, ops, timings)
 }
 
 // watchDaemonAt is the detached daemon body: singleton lock, subscribe, then
 // pump events into the scheduler until the stream ends. watchFiles are
 // stat-polled for env changes; binPath (when non-empty) is the daemon's own
 // executable, watched so a plugin update restarts the daemon onto the new
-// binary automatically. Returns nil on every orderly exit — a held lock or a
+// binary automatically; terminalTitles gates non-agent rename triggers
+// (classifyEvent). Returns nil on every orderly exit — a held lock or a
 // dead server are normal, not errors.
-func watchDaemonAt(sockPath, stateDir, session, binPath string, watchFiles []string, ops watchOps, timings watchTimings) error {
+func watchDaemonAt(sockPath, stateDir, session, binPath string, terminalTitles bool, watchFiles []string, ops watchOps, timings watchTimings) error {
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return err
 	}
@@ -454,7 +456,7 @@ func watchDaemonAt(sockPath, stateDir, session, binPath string, watchFiles []str
 			}
 			break // EOF or dead server: exit; watchdogs revive us
 		}
-		if tr := classifyEvent([]byte(line), lastTitles); tr != nil {
+		if tr := classifyEvent([]byte(line), lastTitles, terminalTitles); tr != nil {
 			select {
 			case triggers <- *tr:
 			default: // scheduler saturated; drop — passes are idempotent
@@ -582,7 +584,7 @@ func runWatchDetached() error {
 			})
 		},
 	}
-	return watchDaemonAt(sockPath, stateDir, session, exePath, cfg.EnvWatchFiles, ops, defaultWatchTimings())
+	return watchDaemonAt(sockPath, stateDir, session, exePath, cfg.Tabs.TerminalTitles, cfg.EnvWatchFiles, ops, defaultWatchTimings())
 }
 
 // daemonAlive probes the daemon's liveness lock: if we can take it, nobody

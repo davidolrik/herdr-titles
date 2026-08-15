@@ -22,34 +22,37 @@ func TestClassifyEvent(t *testing.T) {
 			agent, title)
 	}
 
-	if tr := classifyEvent([]byte(paneEv("claude", "First")), last); tr == nil || tr.kind != triggerRename || tr.pane.Title != "First" {
+	if tr := classifyEvent([]byte(paneEv("claude", "First")), last, true); tr == nil || tr.kind != triggerRename || tr.pane.Title != "First" {
 		t.Fatalf("new agent title => %+v, want rename trigger", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("claude", "First")), last); tr != nil {
+	if tr := classifyEvent([]byte(paneEv("claude", "First")), last, true); tr != nil {
 		t.Errorf("unchanged title => %+v, want nil", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("claude", "Second")), last); tr == nil || tr.kind != triggerRename {
+	if tr := classifyEvent([]byte(paneEv("claude", "Second")), last, true); tr == nil || tr.kind != triggerRename {
 		t.Errorf("changed title => %+v, want rename", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("", "shell title")), last); tr == nil || tr.kind != triggerRename || tr.pane.Agent != "" {
+	if tr := classifyEvent([]byte(paneEv("", "shell title")), last, false); tr != nil {
+		t.Errorf("non-agent title without terminal_titles => %+v, want nil", tr)
+	}
+	if tr := classifyEvent([]byte(paneEv("", "shell title")), last, true); tr == nil || tr.kind != triggerRename || tr.pane.Agent != "" {
 		t.Errorf("non-agent title => %+v, want rename trigger with empty agent", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("", "shell title")), last); tr != nil {
+	if tr := classifyEvent([]byte(paneEv("", "shell title")), last, true); tr != nil {
 		t.Errorf("unchanged non-agent title => %+v, want nil", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("", "")), last); tr != nil {
+	if tr := classifyEvent([]byte(paneEv("", "")), last, true); tr != nil {
 		t.Errorf("cleared title => %+v, want nil (no name to apply)", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("", "shell title")), last); tr == nil || tr.kind != triggerRename {
+	if tr := classifyEvent([]byte(paneEv("", "shell title")), last, true); tr == nil || tr.kind != triggerRename {
 		t.Errorf("title set again after clearing => %+v, want rename", tr)
 	}
-	if tr := classifyEvent([]byte(`{"event":"pane_agent_status_changed","data":{"type":"pane_agent_status_changed"}}`), last); tr == nil || tr.kind != triggerTitle {
+	if tr := classifyEvent([]byte(`{"event":"pane_agent_status_changed","data":{"type":"pane_agent_status_changed"}}`), last, true); tr == nil || tr.kind != triggerTitle {
 		t.Errorf("status change => %+v, want title-only", tr)
 	}
-	if tr := classifyEvent([]byte(`{"event":"tab_focused","data":{"type":"tab_focused"}}`), last); tr == nil || tr.kind != triggerFull {
+	if tr := classifyEvent([]byte(`{"event":"tab_focused","data":{"type":"tab_focused"}}`), last, true); tr == nil || tr.kind != triggerFull {
 		t.Errorf("tab focus => %+v, want full", tr)
 	}
-	if tr := classifyEvent([]byte(`not json`), last); tr != nil {
+	if tr := classifyEvent([]byte(`not json`), last, true); tr != nil {
 		t.Errorf("garbage => %+v, want nil", tr)
 	}
 }
@@ -499,7 +502,7 @@ func TestWatchDaemonRestartsOnBinaryChange(t *testing.T) {
 	timings.BinaryPoll = 20 * time.Millisecond
 	done := make(chan error, 1)
 	go func() {
-		done <- watchDaemonAt(srv.sockPath, stateDir, "wtest", binPath, nil, (&opsRecorder{}).ops(), timings)
+		done <- watchDaemonAt(srv.sockPath, stateDir, "wtest", binPath, false, nil, (&opsRecorder{}).ops(), timings)
 	}()
 	<-srv.subGot
 
@@ -543,7 +546,7 @@ func TestWatchDaemonRestartsOnBinaryRemoval(t *testing.T) {
 	timings.BinaryPoll = 20 * time.Millisecond
 	done := make(chan error, 1)
 	go func() {
-		done <- watchDaemonAt(srv.sockPath, stateDir, "wtest", binPath, nil, (&opsRecorder{}).ops(), timings)
+		done <- watchDaemonAt(srv.sockPath, stateDir, "wtest", binPath, false, nil, (&opsRecorder{}).ops(), timings)
 	}()
 	<-srv.subGot
 
