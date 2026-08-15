@@ -129,24 +129,26 @@ func computeTabName(sockPath string, tab Tab, snap *Snapshot, cfg *TabsConfig) (
 	if paneID == "" {
 		return "", false
 	}
-	if cfg.AgentTitles {
-		for _, a := range snap.Agents {
-			if a.PaneID == paneID && a.Title != "" {
-				return FormatAgentTitle(a.Kind, a.Title, cfg), true
+	// Titles win over the process-derived name (and skip the process-info
+	// call). The agent's reported title and the pane's terminal title are
+	// the same underlying string in a herdr snapshot.
+	var agentKind, title string
+	for _, a := range snap.Agents {
+		if a.PaneID == paneID {
+			agentKind, title = a.Kind, a.Title
+			break
+		}
+	}
+	if title == "" {
+		for _, p := range snap.Panes {
+			if p.PaneID == paneID {
+				title = p.Title
+				break
 			}
 		}
 	}
-	// A pane's own terminal title wins over the process-derived name (and
-	// skips the process-info subprocess) when terminal_titles=true. An
-	// agent pane reach here only with agent_titles=false (or a blank agent
-	// title, which is this same string), and its title counts like any
-	// other pane's.
-	if cfg.TerminalTitles {
-		for _, p := range snap.Panes {
-			if p.PaneID == paneID && p.Title != "" {
-				return FormatTerminalTitle(p.Title, cfg), true
-			}
-		}
+	if name, ok := titleTabName(agentKind, title, cfg); ok {
+		return name, true
 	}
 	prog, cmdline, err := paneProgram(sockPath, paneID)
 	if err != nil || prog == "" {
@@ -170,9 +172,10 @@ func RenameTabForTitle(sockPath, statePath, tabID, paneID, agentKind, title stri
 		// Not using terminal title as tab name
 		return nil
 	}
-	var name string
-	switch {
-	case title == "":
+	name, ok := titleTabName(agentKind, title, cfg)
+	if !ok {
+		// Title was explicitly cleared, fall back to the pane's foreground
+		// program name.
 		prog, cmdline, err := paneProgram(sockPath, paneID)
 		if err != nil || prog == "" {
 			return nil // process-info blip: leave the tab alone
@@ -181,10 +184,6 @@ func RenameTabForTitle(sockPath, statePath, tabID, paneID, agentKind, title stri
 		if name == "" && !cfg.HideShell {
 			return nil
 		}
-	case agentKind != "" && cfg.AgentTitles:
-		name = FormatAgentTitle(agentKind, title, cfg)
-	default:
-		name = FormatTerminalTitle(title, cfg)
 	}
 	label, ok := tabLabel(sockPath, tabID)
 	if !ok {

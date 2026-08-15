@@ -198,6 +198,23 @@ func FormatTerminalTitle(title string, cfg *TabsConfig) string {
 	return truncateRunes(applySubstitutions(title, cfg.Substitutions), cfg.MaxNameLen)
 }
 
+// titleTabName decides title precedence for a pane: agent session title
+// when agent_titles=true, terminal title when terminal_titles=true. If
+// ok=false then no title mode applies, or the title is empty, and the
+// caller should fall back to program name.
+func titleTabName(agentKind, title string, cfg *TabsConfig) (string, bool) {
+	switch {
+	case title == "":
+		return "", false
+	case agentKind != "" && cfg.AgentTitles:
+		return FormatAgentTitle(agentKind, title, cfg), true
+	case cfg.TerminalTitles:
+		return FormatTerminalTitle(title, cfg), true
+	default:
+		return "", false
+	}
+}
+
 // DefaultTabsConfig mirrors the ported defaults of naming.sh/icons.sh. The
 // agent entries in NameOnlyPrograms are the executable names herdr 0.8.0
 // itself detects as interactive agents, plus aider.
