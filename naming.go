@@ -191,11 +191,10 @@ func FormatAgentTitle(agentKind, title string, cfg *TabsConfig) string {
 	return truncateRunes(name, cfg.AgentTitleMaxLen)
 }
 
-// FormatTerminalTitle names a tab after its pane's terminal title. The shell
-// (or program) that set the title is presumed to have produced the desired
-// text already, so no substitutions and no icon — the program is unknown here.
+// FormatTerminalTitle names a tab after its pane's terminal title.
+// No icon is added since the program is unknown.
 func FormatTerminalTitle(title string, cfg *TabsConfig) string {
-	return truncateRunes(title, cfg.MaxNameLen)
+	return truncateRunes(applySubstitutions(title, cfg.Substitutions), cfg.MaxNameLen)
 }
 
 // DefaultTabsConfig mirrors the ported defaults of naming.sh/icons.sh. The
