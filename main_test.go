@@ -173,6 +173,45 @@ func TestInitSubcommand(t *testing.T) {
 	}
 }
 
+// In-process coverage of the daemonless terminal-titles hook path: the
+// locked read renames from the pane's current title, and a pane that left
+// the invoking tab does not cause a rename. The fake API has no event stream,
+// so the hook degrades to the single read — the linger is covered separately.
+func TestRunFastDaemonlessInProcess(t *testing.T) {
+	api := newFakeAPI(t)
+	configDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configDir, "config.hcl"),
+		[]byte("template = \"x\"\ntabs {\n  terminal_titles = true\n  watch_titles = false\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", configDir)
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "insess")
+	t.Setenv("HERDR_TAB_ID", "w1:t1")
+	t.Setenv("HERDR_PANE_ID", "w1:p1")
+	t.Setenv("HERDR_SOCKET_PATH", api.sockPath)
+	api.setTab("w1:t1", "1")
+	api.setPaneTitle("w1:p1", "w1:t1", "", "make -j all")
+
+	if err := runFast("precmd", nil); err != nil {
+		t.Fatalf("runFast: %v", err)
+	}
+	_, renames, _ := api.recorded()
+	if len(renames) != 1 || renames[0] != "w1:t1=make -j all" {
+		t.Fatalf("renames = %v, want [w1:t1=make -j all]", renames)
+	}
+
+	// The pane now reports another tab (moved out): don't rename.
+	api.setPaneTitle("w1:p1", "w1:t9", "", "elsewhere")
+	if err := runFast("precmd", nil); err != nil {
+		t.Fatalf("runFast after move: %v", err)
+	}
+	_, renames, _ = api.recorded()
+	if len(renames) != 1 {
+		t.Fatalf("moved-out pane still renamed its old tab: %v", renames)
+	}
+}
+
 func TestLingerPaneTitles(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()

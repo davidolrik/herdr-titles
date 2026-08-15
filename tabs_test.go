@@ -347,12 +347,21 @@ func TestRenameTabForTitleBothModesOff(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// The master switch off is an even earlier no-op, whatever the modes say.
+	cfg.Enabled = false
+	cfg.AgentTitles = true
+	cfg.TerminalTitles = true
+	for _, title := range []string{"Session title", ""} {
+		if _, err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "w1:p1", "claude", title, true, cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
 	_, renames, _ := api.recorded()
 	api.mu.Lock()
 	infoReqs := api.infoReqs
 	api.mu.Unlock()
 	if len(renames) != 0 || infoReqs != 0 {
-		t.Errorf("both modes off still touched the API: renames=%v infoReqs=%d", renames, infoReqs)
+		t.Errorf("gated-off config still touched the API: renames=%v infoReqs=%d", renames, infoReqs)
 	}
 }
 

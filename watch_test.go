@@ -508,6 +508,9 @@ type fakeEventServer struct {
 	// rejectLayoutSub mimics an older herdr: a subscribe with layout.updated
 	// is refused, only the retry without it can succeed.
 	rejectLayoutSub atomic.Bool
+	// snapshot, when set (a session.snapshot result payload), makes the
+	// server answer the daemon's seed fetch; unset replies with an error.
+	snapshot atomic.Value
 }
 
 func newFakeEventServer(t *testing.T, pingOK bool) *fakeEventServer {
@@ -552,6 +555,15 @@ func (s *fakeEventServer) serve() {
 		}
 		line, err := bufio.NewReader(conn).ReadString('\n')
 		if err != nil {
+			conn.Close()
+			continue
+		}
+		if strings.Contains(line, "session.snapshot") {
+			if snap, _ := s.snapshot.Load().(string); snap != "" {
+				conn.Write([]byte(`{"id":"herdr-titles","result":` + snap + `}` + "\n"))
+			} else {
+				conn.Write([]byte(`{"id":"herdr-titles","error":{"code":"unavailable","message":"no snapshot"}}` + "\n"))
+			}
 			conn.Close()
 			continue
 		}
@@ -688,6 +700,84 @@ func TestWatchDaemonFallsBackWithoutLayoutSubscription(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("daemon did not exit on EOF")
 	}
+}
+
+// The startup seed primes the focus gate end-to-end: a snapshot-served
+// layout mutes the non-focused pane of a split before any event arrives.
+func TestWatchDaemonSeedGatesRenames(t *testing.T) {
+	srv := newFakeEventServer(t, true)
+	srv.snapshot.Store(`{"snapshot":{"focused_workspace_id":"w1","focused_tab_id":"w1:t1","workspaces":[],"tabs":[],"panes":[{"pane_id":"w1:p1","tab_id":"w1:t1"},{"pane_id":"w1:p2","tab_id":"w1:t1"}],"agents":[],"layouts":[{"tab_id":"w1:t1","focused_pane_id":"w1:p1"}]}}`)
+	rec := &opsRecorder{}
+	stateDir := t.TempDir()
+	done := make(chan error, 1)
+	go func() {
+		done <- watchDaemon(srv.sockPath, stateDir, "wtest", nil, rec.ops(), testTimings())
+	}()
+	<-srv.subGot
+
+	srv.events <- `{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":"w1:p2","tab_id":"w1:t1","agent":"","terminal_title_stripped":"background"}}}`
+	srv.events <- `{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":"w1:p1","tab_id":"w1:t1","agent":"","terminal_title_stripped":"focused"}}}`
+	time.Sleep(100 * time.Millisecond)
+	_, _, renames := rec.snapshot()
+	if len(renames) != 1 || renames[0] != "w1:t1=focused" {
+		t.Fatalf("renames = %v, want only the seeded focused pane's title", renames)
+	}
+
+	close(srv.closeSub)
+	<-done
+}
+
+// End-to-end saturation: a blocked scheduler fills the 64-slot trigger
+// channel, dropped renames set recoverFull, and once the queue drains the
+// daemon escalates to a full pass.
+func TestWatchDaemonEscalatesSaturationDrops(t *testing.T) {
+	srv := newFakeEventServer(t, true)
+	rec := &opsRecorder{}
+	ops := rec.ops()
+	gate := make(chan struct{})
+	innerRename := ops.rename
+	ops.rename = func(p paneEvent) bool {
+		<-gate // closed later: the first call stalls the scheduler
+		return innerRename(p)
+	}
+	stateDir := t.TempDir()
+	done := make(chan error, 1)
+	go func() {
+		done <- watchDaemon(srv.sockPath, stateDir, "wtest", nil, ops, testTimings())
+	}()
+	<-srv.subGot
+
+	ev := func(pane string) string {
+		return fmt.Sprintf(`{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":%q,"tab_id":"w1:t1","agent":"","terminal_title_stripped":"t-%s"}}}`, pane, pane)
+	}
+	srv.events <- ev("w1:p0")
+	time.Sleep(60 * time.Millisecond) // > debounce: the scheduler is stuck in the gated rename
+	for i := 1; i <= 90; i++ {        // > channel capacity: the tail drops
+		srv.events <- ev(fmt.Sprintf("w1:p%d", i))
+	}
+	// The kernel socket buffer absorbs the flood instantly; give the read
+	// loop time to classify it into the full trigger channel — the drops
+	// must happen BEFORE the gate opens, or nothing saturates.
+	time.Sleep(200 * time.Millisecond)
+	close(gate)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if fulls, _, _ := rec.snapshot(); fulls >= 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			fulls, _, renames := rec.snapshot()
+			t.Fatalf("saturation drop never escalated: fulls=%d renames=%d", fulls, len(renames))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if _, _, renames := rec.snapshot(); len(renames) >= 91 {
+		t.Fatalf("all %d renames delivered; the channel never saturated", len(renames))
+	}
+
+	close(srv.closeSub)
+	<-done
 }
 
 func TestWatchDaemonSingleton(t *testing.T) {
