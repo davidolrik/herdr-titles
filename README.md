@@ -140,6 +140,10 @@ prompt never blocks, and stay registered across re-sourcing. On bash they
 cooperate with bash-preexec/ble.sh/atuin instead of clobbering the DEBUG
 trap; see the comments in `shell/hook.bash`.
 
+With `tabs { terminal_titles = true }`, you don't really need the hooks.
+They become no-ops to avoid fighting with the terminal title your shell
+is about to set. They will only revive a dead watch daemon if needed.
+
 ## The watch daemon
 
 A small per-session daemon (started by the plugin's `[[startup]]` hook,

@@ -145,10 +145,9 @@ func computeTabName(sockPath string, tab Tab, snap *Snapshot, cfg *TabsConfig) (
 		}
 	}
 	// A pane's own terminal title wins over the process-derived name (and
-	// skips the process-info subprocess). Agent panes are excluded: their
-	// terminal title IS the agent session title, which agent_titles governs.
-	// The shell-hook fast path stays on process names: at preexec the stored
-	// title is still the previous one.
+	// skips the process-info subprocess) when terminal_titles=true. Agent
+	// panes are excluded: their terminal title IS the agent session title,
+	// which agent_titles governs.
 	if cfg.TerminalTitles && !paneHasAgent(paneID, snap.Agents) {
 		for _, p := range snap.Panes {
 			if p.PaneID == paneID && p.Title != "" {

@@ -168,6 +168,18 @@ func runFast(mode string, args []string) error {
 		return nil
 	}
 
+	// When using terminal titles, a process-derived rename would only fight
+	// the title the shell is about to set, so the hook becomes no-op and
+	// only revives a dead daemon if needed.
+	if tabs.TerminalTitles {
+		stateDir := pluginStateDir()
+		if err := os.MkdirAll(stateDir, 0o755); err != nil {
+			return err
+		}
+		ensureDaemon(stateDir, envOr("HERDR_SESSION", "default"))
+		return nil
+	}
+
 	var prog, cmdline string
 	sampled := false
 	switch mode {
