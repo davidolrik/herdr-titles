@@ -177,13 +177,13 @@ func classifyEvent(line []byte, st *classifyState, terminalTitles bool) *trigger
 			return nil
 		}
 		st.paneTab[p.PaneID] = p.TabID
-		if focus := st.tabFocus[p.TabID]; focus != "" && focus != p.PaneID {
-			return nil // not the pane the tab is named after
-		}
 		if st.lastTitles[p.PaneID] == p.Title {
 			return nil
 		}
 		st.lastTitles[p.PaneID] = p.Title
+		if focus := st.tabFocus[p.TabID]; focus != "" && focus != p.PaneID {
+			return nil // not the pane the tab is named after
+		}
 		return &trigger{kind: triggerRename, pane: paneEvent{
 			PaneID: p.PaneID, TabID: p.TabID, Agent: p.Agent, Title: p.Title,
 		}}

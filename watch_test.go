@@ -82,13 +82,18 @@ func TestClassifyEventFocusGate(t *testing.T) {
 		t.Errorf("non-focused pane title => %+v, want nil (tab named after w1:p1)", tr)
 	}
 
-	// pane.focused moves the tab's focus to w1:p2; its titles now rename.
+	// pane.focused moves the tab's focus to w1:p2. Its gated title was still
+	// recorded, so replaying it dedups — the focus change's full pass already
+	// applied it — while a genuinely new title renames.
 	focusEv := `{"event":"pane_focused","data":{"type":"pane_focused","pane_id":"w1:p2","workspace_id":"w1"}}`
 	if tr := classifyEvent([]byte(focusEv), st, true); tr == nil || tr.kind != triggerFull {
 		t.Fatalf("pane focus => %+v, want full", tr)
 	}
-	if tr := classifyEvent([]byte(paneEv("w1:p2", "background pane title")), st, true); tr == nil || tr.kind != triggerRename {
-		t.Errorf("newly focused pane title => %+v, want rename", tr)
+	if tr := classifyEvent([]byte(paneEv("w1:p2", "background pane title")), st, true); tr != nil {
+		t.Errorf("recorded title replayed after focus switch => %+v, want nil", tr)
+	}
+	if tr := classifyEvent([]byte(paneEv("w1:p2", "fresh title")), st, true); tr == nil || tr.kind != triggerRename {
+		t.Errorf("newly focused pane's new title => %+v, want rename", tr)
 	}
 	if tr := classifyEvent([]byte(paneEv("w1:p1", "focused pane title 2")), st, true); tr != nil {
 		t.Errorf("formerly focused pane => %+v, want nil", tr)
@@ -155,8 +160,29 @@ func TestClassifyStateSeed(t *testing.T) {
 
 	focusEv := `{"event":"pane_focused","data":{"type":"pane_focused","pane_id":"w1:p2","workspace_id":"w1"}}`
 	classifyEvent([]byte(focusEv), st, true)
-	if tr := classifyEvent([]byte(paneEv("w1:p2", "background")), st, true); tr == nil || tr.kind != triggerRename {
+	if tr := classifyEvent([]byte(paneEv("w1:p2", "fresh")), st, true); tr == nil || tr.kind != triggerRename {
 		t.Errorf("focus switch via seeded paneTab => %+v, want rename", tr)
+	}
+}
+
+// Ensure title changes are recorded even when a pane is unfocused,
+// so that further changes after it becomes focused are not lost.
+func TestClassifyEventUnfocusedTitlesRecorded(t *testing.T) {
+	st := newClassifyState()
+	paneEv := func(pane, title string) string {
+		return fmt.Sprintf(
+			`{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":%q,"tab_id":"w1:t1","agent":"","terminal_title_stripped":%q}}}`,
+			pane, title)
+	}
+	layoutEv := `{"event":"layout_updated","data":{"type":"layout_updated","layout":{"tab_id":"w1:t1","focused_pane_id":"w1:p1","panes":[{"pane_id":"w1:p1"},{"pane_id":"w1:p2"}]}}}`
+	focusEv := `{"event":"pane_focused","data":{"type":"pane_focused","pane_id":"w1:p2","workspace_id":"w1"}}`
+
+	classifyEvent([]byte(layoutEv), st, true)
+	classifyEvent([]byte(paneEv("w1:p2", "A")), st, true)
+	classifyEvent([]byte(paneEv("w1:p2", "B")), st, true)
+	classifyEvent([]byte(focusEv), st, true)
+	if tr := classifyEvent([]byte(paneEv("w1:p2", "A")), st, true); tr == nil || tr.kind != triggerRename || tr.pane.Title != "A" {
+		t.Errorf("change back to a title recorded while unfocused => %+v, want rename to A", tr)
 	}
 }
 
