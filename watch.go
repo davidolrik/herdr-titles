@@ -92,12 +92,14 @@ var watchSubscriptions = []string{
 	// cheap title-only pass while the daemon is alive.
 }
 
-// layoutSubscription fires on structural changes (split, move, close) and
-// carries the tab's focused pane — it keeps classifyState.tabFocus and
-// paneTab current between snapshots. Subscribed separately: a herdr too old
-// to know the type rejects the WHOLE subscribe call, so the daemon retries
-// without it and merely loses gate sharpness, not its event stream.
-const layoutSubscription = "layout.updated"
+// optionalSubscriptions are used for the classifier's bookkeeping:
+// layout.updated carries each tab's focused pane; the close events prune
+// state, since closing a tab or workspace does not emit per-pane events.
+// They're subscribed separately from the required events because a herdr
+// too old to know any one type rejects the WHOLE subscribe call, so the
+// daemon retries without the optional subscriptions and merely loses the
+// last-focused pane tracking and pruning, not the whole event stream.
+var optionalSubscriptions = []string{"layout.updated", "tab.closed", "workspace.closed"}
 
 // classifyState is the classifier's per-daemon memory, owned by the event
 // loop goroutine: last stripped titles per pane (dedup), and the tab-focus
@@ -113,6 +115,17 @@ func newClassifyState() *classifyState {
 		lastTitles: map[string]string{},
 		paneTab:    map[string]string{},
 		tabFocus:   map[string]string{},
+	}
+}
+
+// pruneTab drops all classifier state owned by a closed tab.
+func (st *classifyState) pruneTab(tabID string) {
+	delete(st.tabFocus, tabID)
+	for paneID, tab := range st.paneTab {
+		if tab == tabID {
+			delete(st.paneTab, paneID)
+			delete(st.lastTitles, paneID)
+		}
 	}
 }
 
@@ -136,8 +149,10 @@ func classifyEvent(line []byte, st *classifyState, terminalTitles bool) *trigger
 	var ev struct {
 		Event string `json:"event"`
 		Data  struct {
-			PaneID string `json:"pane_id"`
-			Pane   *struct {
+			PaneID      string `json:"pane_id"`
+			TabID       string `json:"tab_id"`
+			WorkspaceID string `json:"workspace_id"`
+			Pane        *struct {
 				PaneID string `json:"pane_id"`
 				TabID  string `json:"tab_id"`
 				Agent  string `json:"agent"`
@@ -176,6 +191,37 @@ func classifyEvent(line []byte, st *classifyState, terminalTitles bool) *trigger
 		// The payload has no tab_id; attribute via the tracked pane->tab map.
 		if tabID := st.paneTab[ev.Data.PaneID]; tabID != "" {
 			st.tabFocus[tabID] = ev.Data.PaneID
+		}
+		return &trigger{kind: triggerFull}
+	case "pane_closed", "pane_exited":
+		id := ev.Data.PaneID
+		delete(st.lastTitles, id)
+		delete(st.paneTab, id)
+		for tabID, paneID := range st.tabFocus {
+			if paneID == id {
+				delete(st.tabFocus, tabID)
+			}
+		}
+		return &trigger{kind: triggerFull}
+	case "tab_closed":
+		st.pruneTab(ev.Data.TabID)
+		return &trigger{kind: triggerFull}
+	case "workspace_closed":
+		// Public IDs are namespaced by workspace ("w6" owns "w6:t1", "w6:p1"),
+		// so a prefix scan prunes everything the workspace onwed.
+		if ev.Data.WorkspaceID != "" {
+			prefix := ev.Data.WorkspaceID + ":"
+			for tabID := range st.tabFocus {
+				if strings.HasPrefix(tabID, prefix) {
+					delete(st.tabFocus, tabID)
+				}
+			}
+			for paneID := range st.paneTab {
+				if strings.HasPrefix(paneID, prefix) {
+					delete(st.paneTab, paneID)
+					delete(st.lastTitles, paneID)
+				}
+			}
 		}
 		return &trigger{kind: triggerFull}
 	case "layout_updated":
@@ -474,7 +520,7 @@ func watchDaemonAt(sockPath, stateDir, session, binPath string, terminalTitles b
 	}
 
 	conn, reader, err := subscribeEvents(sockPath,
-		append(append([]string{}, watchSubscriptions...), layoutSubscription), timings.ReadDeadline)
+		append(append([]string{}, watchSubscriptions...), optionalSubscriptions...), timings.ReadDeadline)
 	if err != nil {
 		conn, reader, err = subscribeEvents(sockPath, watchSubscriptions, timings.ReadDeadline)
 	}
