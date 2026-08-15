@@ -158,9 +158,10 @@ instantly and keeps the manifest down to three tiny watchdog hooks.
 
 It is self-healing by construction: the daemon holds a per-session lock for
 its lifetime, and the watchdog hooks (plus every shell prompt) probe that
-lock and respawn a dead daemon. It also watches its own binary — installing
-a plugin update (or rebuilding a dev checkout) makes every running daemon
-exec itself onto the new binary within seconds, no restart required. Work is debounced and scoped — frequent
+lock and respawn a dead daemon. It also watches its own binary and config,
+and restarts itself when either changes, so installing a plugin update (or
+rebuilding a dev checkout) or changing the config will take effect within
+seconds, no manual restarts needed. Work is debounced and scoped — frequent
 events take cheap title-only or targeted-rename paths with zero subprocess
 spawns, and full reconciles are rate-limited — so steady-state CPU cost is
 near zero. `tabs { watch_titles = false }` disables it; titles then update
