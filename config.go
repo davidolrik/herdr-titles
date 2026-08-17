@@ -254,6 +254,13 @@ func resolveTabs(raw *rawTabs, path, shell string) (*TabsConfig, error) {
 	setBool(&tabs.AgentTitles, raw.AgentTitles)
 	setBool(&tabs.TerminalTitles, raw.TerminalTitles)
 	setBool(&tabs.WatchTitles, raw.WatchTitles)
+	// terminal_titles rides the daemon: it is the single writer that follows
+	// pane titles, and the shell hooks only publish titles for it to apply.
+	// With no daemon there is nothing to apply them, so refuse the
+	// combination outright rather than degrade silently.
+	if tabs.TerminalTitles && !tabs.WatchTitles {
+		return nil, fmt.Errorf("%s: tabs.terminal_titles = true requires tabs.watch_titles = true (the watch daemon applies terminal titles)", path)
+	}
 	if raw.MaxNameLen != nil {
 		tabs.MaxNameLen = *raw.MaxNameLen
 	}

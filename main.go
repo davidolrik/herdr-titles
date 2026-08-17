@@ -6,10 +6,8 @@
 package main
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -152,60 +150,6 @@ func contextTabID() string {
 	return ctx.TabID
 }
 
-// hookLingerQuiet is how long the daemonless hook waits after the most
-// recent event for its pane before considering the stream quiet.
-// hookLingerMax caps the whole linger so a hook process for a spammy
-// pane cannot live forever.
-const (
-	hookLingerQuiet = 300 * time.Millisecond
-	hookLingerMax   = 2 * time.Second
-)
-
-// lingerPaneTitles watches pane.updated events for one pane on an
-// established subscription until this pane's events stay quiet (or the
-// cap expires), then calls apply once if anything changed. Events act
-// as a change signal only: the applier re-reads the pane under the lock,
-// so racing hooks are ordered by lock acquisition over current server state,
-// never by replaying possibly-stale event payloads.
-func lingerPaneTitles(conn net.Conn, reader *bufio.Reader, paneID string, quiet, max time.Duration,
-	apply func() error) error {
-	lingerEnd := time.Now().Add(max)
-	quietEnd := time.Now().Add(quiet)
-	pending := false
-	for {
-		deadline := quietEnd
-		if lingerEnd.Before(deadline) {
-			deadline = lingerEnd
-		}
-		_ = conn.SetReadDeadline(deadline)
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			// Quiet period elapsed, cap expired, or the stream ended
-			break
-		}
-		var ev struct {
-			Event string `json:"event"`
-			Data  struct {
-				Pane *struct {
-					PaneID string `json:"pane_id"`
-				} `json:"pane"`
-			} `json:"data"`
-		}
-		if json.Unmarshal([]byte(line), &ev) != nil || ev.Event != "pane_updated" {
-			continue
-		}
-		if ev.Data.Pane == nil || ev.Data.Pane.PaneID != paneID {
-			continue
-		}
-		pending = true
-		quietEnd = time.Now().Add(quiet)
-	}
-	if !pending {
-		return nil
-	}
-	return apply()
-}
-
 // runFast is the shell-hook path: rename just the invoking tab, right now.
 // mode "preexec" carries the typed command line (plus a "shell" marker when
 // the word is a construct and the pane's real process must be sampled); mode
@@ -224,92 +168,24 @@ func runFast(mode string, args []string) error {
 		return nil
 	}
 
-	// When using terminal titles with the daemon, the hook never renames:
-	// the daemon is the SINGLE writer for these panes. Every rename the
-	// plugin makes fires tab.renamed, which schedules a full pass that
-	// recomputes the tab from the pane's title — so a hook rename that the
-	// title disagrees with is simply undone a moment later (a flap), and the
-	// two writers must never diverge. Herdr has no "foreground command
-	// changed" event, so the program a command starts is conveyed through
-	// the pane's TITLE instead: the shell integration publishes it at preexec
-	// (see shell/hook.*), the daemon's pane.updated stream applies it, and a
+	// Under terminal titles the hook never renames: the daemon is the SINGLE
+	// writer for these panes (config guarantees watch_titles is on). Every
+	// rename the plugin makes fires tab.renamed, which schedules a full pass
+	// that recomputes the tab from the pane's title — so a hook rename that
+	// the title disagrees with is simply undone a moment later, and the two
+	// writers must never diverge. Herdr has no "foreground command changed"
+	// event, so the program a command starts is conveyed through the pane's
+	// TITLE instead: the shell integration publishes it at preexec (see
+	// shell/hook.*), the daemon's pane.updated stream applies it, and a
 	// program that sets its own title (nvim) overrides it moments later. The
-	// hook here just revives a dead daemon. With the daemon disabled by
-	// watch_titles=false, the hook keeps just the focused tab up to date, and
-	// leaves the rest to the watchdog events' full passes.
+	// hook here just revives a dead daemon.
 	if tabs.TerminalTitles {
 		stateDir := pluginStateDir()
 		if err := os.MkdirAll(stateDir, 0o755); err != nil {
 			return err
 		}
-		session := envOr("HERDR_SESSION", "default")
-		if tabs.WatchTitles {
-			ensureDaemon(stateDir, session)
-			return nil
-		} else {
-			// Subscribe before reading to ensure we don't miss any events. Events
-			// that overlap the read are no-ops if they're the same as the current
-			// label, and every lingering hook sees the same server-ordered stream,
-			// so racing hooks converge on the newest title.
-			sock := sessionSocketPath()
-			paneID := os.Getenv("HERDR_PANE_ID")
-			statePath := tabStatePath(stateDir, session)
-			// apply reads pane info and renames under the lock, so racing hooks
-			// always act on fresh state, and follows the fast path's rerun contract:
-			// a contender hands its work to the holder, so a rerun must be a superset
-			// of whatever the contender wanted — another hook's fresher title or a
-			// watchdog's full reconcile.
-			apply := func() error {
-				first := true
-				return withLock(stateDir, session, func() error {
-					if !first {
-						return pass("rerun", true, false)
-					}
-					first = false
-					p, ok := paneInfo(sock, paneID)
-					if !ok {
-						// Don't need to escalate here, the next hook event retries.
-						return nil
-					}
-					if p.TabID != tabID {
-						// The pane moved out of this tab mid-linger, its title no
-						// longer names this tab, and its new tab is not ours to touch.
-						return nil
-					}
-					retryFull, err := RenameTabForTitle(sock, statePath,
-						tabID, paneID, p.Agent, p.Title, p.Focused, tabs)
-					if err != nil {
-						return err
-					}
-					if retryFull {
-						// A transient tab.get/process-info blip prevented a rename
-						// that was due; the linger exits quiet and nothing resends
-						// this title, so escalate to a full pass like the daemon does.
-						return pass("rerun", true, false)
-					}
-					return nil
-				})
-			}
-			if mode == "preexec" {
-				// Shells set the title at the prompt, so preexec sees the previous
-				// prompt's title: applying it is a no-op at best, and lingering here
-				// would only double the subscriber processes per command — precmd's
-				// linger covers the same window.
-				return apply()
-			}
-			conn, reader, subErr := subscribeEvents(sock, []string{"pane.updated"}, hookLingerMax)
-			if subErr == nil {
-				defer conn.Close()
-			}
-			if err := apply(); err != nil {
-				return err
-			}
-			if subErr != nil {
-				// Lingering is best-effort, so just exit if we can't subscribe.
-				return nil
-			}
-			return lingerPaneTitles(conn, reader, paneID, hookLingerQuiet, hookLingerMax, apply)
-		}
+		ensureDaemon(stateDir, envOr("HERDR_SESSION", "default"))
+		return nil
 	}
 
 	var prog, cmdline string

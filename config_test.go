@@ -132,6 +132,40 @@ env { ttl = "not-a-duration" }
 	}
 }
 
+// terminal_titles needs the watch daemon: it is the single writer that
+// follows pane titles, and the shell hooks only publish titles for it to
+// apply. Enabling titles with the daemon off is a config error, not a
+// silently degraded mode. watch_titles = false stays valid on its own
+// (process-name naming via hooks and watchdog full passes).
+func TestLoadConfigTerminalTitlesRequireDaemon(t *testing.T) {
+	path := writeConfig(t, `
+template = "x"
+tabs {
+  terminal_titles = true
+  watch_titles    = false
+}
+`)
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("terminal_titles=true with watch_titles=false loaded, want an error")
+	}
+	for _, want := range []string{"terminal_titles", "watch_titles"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %s", err, want)
+		}
+	}
+	// The other combinations are all valid.
+	for _, body := range []string{
+		"tabs {\n  terminal_titles = true\n}\n",                          // daemon on by default
+		"tabs {\n  watch_titles = false\n}\n",                            // no daemon, no titles
+		"tabs {\n  terminal_titles = false\n  watch_titles = false\n}\n", // explicit
+	} {
+		if _, err := LoadConfig(writeConfig(t, "template = \"x\"\n"+body)); err != nil {
+			t.Errorf("valid config %q rejected: %v", body, err)
+		}
+	}
+}
+
 func TestLoadConfigInvalidScope(t *testing.T) {
 	path := writeConfig(t, `
 template = "x"

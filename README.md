@@ -175,11 +175,9 @@ it publishes the program's name as the pane title (a builtin like `cd`
 publishes nothing, so the prompt's title stands), the daemon applies it, and
 a program that sets its own title (nvim, ssh) overrides it a moment later;
 back at the prompt the shell republishes its own title. Keep the integration
-installed. Without the daemon
-(`watch_titles = false`), each prompt's hook follows the pane's title
-for about two seconds and then exits, so a long-running command that keeps
-updating its title (a build reporting progress) is only reflected up to that
-point until the next prompt — enable `watch_titles` for continuous following.
+installed. Because the daemon is what applies titles, `terminal_titles`
+requires `watch_titles` (the default); the plugin refuses a config that
+enables titles with the daemon off.
 
 ## The watch daemon
 
@@ -196,8 +194,9 @@ itself when it changes, so installing a plugin update (or rebuilding a dev
 checkout) will take effect within seconds. Work is debounced and scoped —
 frequent events take cheap title-only or targeted-rename paths with zero
 subprocess spawns, and full reconciles are rate-limited— so steady-state CPU
-cost is near zero. `tabs { watch_titles = false }` disables it; titles then
-update on focus changes only.
+cost is near zero. `tabs { watch_titles = false }` disables it; tabs are then
+named by program via the shell hooks and the watchdog events' full passes,
+titles update on focus changes only, and `terminal_titles` is unavailable.
 
 Note that if the `terminal_titles` option is changed while the daemon is
 running, title changes may be applied inconsistently. Restart the daemon
