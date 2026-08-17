@@ -268,9 +268,18 @@ func runFast(mode string, args []string) error {
 					// longer names this tab, and its new tab is not ours to touch.
 					return nil
 				}
-				_, err := RenameTabForTitle(sock, statePath,
+				retryFull, err := RenameTabForTitle(sock, statePath,
 					tabID, paneID, p.Agent, p.Title, p.Focused, tabs)
-				return err
+				if err != nil {
+					return err
+				}
+				if retryFull {
+					// A transient tab.get/process-info blip prevented a rename
+					// that was due; the linger exits quiet and nothing resends
+					// this title, so escalate to a full pass like the daemon does.
+					return pass("rerun", true, false)
+				}
+				return nil
 			})
 		}
 		conn, reader, subErr := subscribeEvents(sock, []string{"pane.updated"}, hookLingerMax)

@@ -212,6 +212,37 @@ func TestRunFastDaemonlessInProcess(t *testing.T) {
 	}
 }
 
+// A transient tab.get failure during the hook's apply must escalate to a
+// full pass rather than silently dropping the title: the linger exits
+// quiet, and no later event will carry that title again. On the fake, no
+// snapshot is configured, so the escalated full pass fails outright — that
+// error surfacing from runFast is the proof escalation happened.
+func TestRunFastDaemonlessEscalatesTabBlip(t *testing.T) {
+	api := newFakeAPI(t)
+	configDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configDir, "config.hcl"),
+		[]byte("template = \"x\"\ntabs {\n  terminal_titles = true\n  watch_titles = false\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", configDir)
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "insess")
+	t.Setenv("HERDR_TAB_ID", "w1:t1")
+	t.Setenv("HERDR_PANE_ID", "w1:p1")
+	t.Setenv("HERDR_SOCKET_PATH", api.sockPath)
+	// The pane is known but its tab is not registered: tab.get blips.
+	api.setPaneTitle("w1:p1", "w1:t1", "", "make -j all")
+
+	err := runFast("precmd", nil)
+	if err == nil {
+		t.Fatal("tab.get blip was swallowed: runFast returned nil, want the escalated full pass's error")
+	}
+	_, renames, _ := api.recorded()
+	if len(renames) != 0 {
+		t.Fatalf("renames = %v, want none (tab.get failed)", renames)
+	}
+}
+
 func TestLingerPaneTitles(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()

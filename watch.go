@@ -59,7 +59,10 @@ type trigger struct {
 }
 
 type watchOps struct {
-	full  func()
+	// full returns an error when the pass could not complete; the scheduler
+	// keeps the full pending and retries after the floor, because the events
+	// that made it due will not be re-emitted.
+	full  func() error
 	title func(bypassEnvCache bool)
 	// rename returns true if the caller needs to escalate to a full pass
 	rename func(paneEvent) bool
@@ -319,10 +322,19 @@ func runScheduler(triggers <-chan trigger, ops watchOps, timings watchTimings, s
 				arm(wait)
 				return
 			}
-			ops.full()
+			err := ops.full()
 			lastFull = time.Now()
-			pendingFull, pendingTitle, pendingBypass = false, false, false
+			pendingTitle, pendingBypass = false, false
 			renames = map[string]paneEvent{}
+			if err != nil {
+				// A transient failure (snapshot blip, config read error) must
+				// not drop the pass: a gated pane's recorded title is only ever
+				// delivered by this full, so keep it pending and re-arm at the
+				// floor rather than waiting for an unrelated trigger.
+				arm(timings.FullFloor)
+				return
+			}
+			pendingFull = false
 			return
 		}
 		for _, p := range renames {
@@ -824,7 +836,7 @@ func runWatchDetached() error {
 		go announceRestart(sockPath, body, 2*time.Second, 150)
 	}
 	ops := watchOps{
-		full: func() { _ = run("watch.event") },
+		full: func() error { return run("watch.event") },
 		title: func(bypass bool) {
 			_ = runTitleOnly("watch.title", bypass)
 		},

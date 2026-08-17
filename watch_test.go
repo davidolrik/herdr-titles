@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -169,6 +170,57 @@ func TestSchedulerEscalatesBlippedRenames(t *testing.T) {
 	fulls, _, renames := rec.snapshot()
 	if len(renames) != 1 || fulls != 1 {
 		t.Fatalf("failed rename => renames=%v fulls=%d, want 1 rename then 1 full", renames, fulls)
+	}
+
+	close(stop)
+	close(triggers)
+	<-done
+}
+
+// A full pass that fails transiently must stay pending and be retried: after
+// the classifier records a gated pane's title, that title is deliverable only
+// by the pane_focused full pass, and herdr will not re-emit an unchanged
+// title — so a dropped full pass would strand the tab on its old name.
+func TestSchedulerRetriesFailedFullPass(t *testing.T) {
+	rec := &opsRecorder{}
+	ops := rec.ops()
+	var mu sync.Mutex
+	attempts := 0
+	ops.full = func() error {
+		mu.Lock()
+		defer mu.Unlock()
+		attempts++
+		if attempts == 1 {
+			return errors.New("transient snapshot blip")
+		}
+		return nil
+	}
+	triggers := make(chan trigger, 16)
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() { runScheduler(triggers, ops, testTimings(), stop); close(done) }()
+
+	triggers <- trigger{kind: triggerFull}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		mu.Lock()
+		n := attempts
+		mu.Unlock()
+		if n >= 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("failed full pass was never retried: attempts=%d", n)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	// Once the retry succeeds, nothing keeps re-running the full pass.
+	time.Sleep(3 * testTimings().FullFloor)
+	mu.Lock()
+	n := attempts
+	mu.Unlock()
+	if n != 2 {
+		t.Errorf("full pass ran %d times, want exactly 2 (one failure, one retry)", n)
 	}
 
 	close(stop)
@@ -396,7 +448,7 @@ type opsRecorder struct {
 
 func (r *opsRecorder) ops() watchOps {
 	return watchOps{
-		full: func() { r.mu.Lock(); r.fulls++; r.mu.Unlock() },
+		full: func() error { r.mu.Lock(); r.fulls++; r.mu.Unlock(); return nil },
 		title: func(bypass bool) {
 			r.mu.Lock()
 			r.titles = append(r.titles, bypass)
