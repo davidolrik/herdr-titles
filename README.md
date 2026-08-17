@@ -116,35 +116,48 @@ The tab is then named by its program until the pane emits a *different* title,
 which takes over as usual. Herdr's own reversion of a dropped custom name to
 the bare tab number is not a user gesture: it re-adopts but keeps the title.
 
-## Shell hook: real-time tab names
+## Shell integration: real-time tab names
 
-Herdr has no "foreground command changed" event, so sourcing the bundled
-hook makes tabs follow every command the moment you run it.
+Herdr has no "foreground command changed" event, so the shell integration is
+what makes tabs follow every command the moment you run it. Install it with
+one line — `init <shell>` prints the hook with the plugin binary's absolute
+path baked in, the way `mise activate` or `atuin init` do:
 
 `herdr plugin install` puts the plugin in a directory named after the plugin
 id plus a hash (`davidolrik.titles-<hash>`). The hash is stable across
 reinstalls, but a glob keeps your shell config independent of it:
 
 ```sh
-# zsh (~/.zshrc or a conf.d file) — (N) makes a missing plugin a silent no-op
-for _f in ${HOME}/.config/herdr/plugins/github/davidolrik.titles-*/shell/hook.zsh(N); do
-  source $_f; break
-done
+# zsh (~/.zshrc or a conf.d file)
+eval "$(${HOME}/.config/herdr/plugins/github/davidolrik.titles-*/bin/herdr-titles init zsh 2>/dev/null)"
 ```
 
 ```sh
-# bash (~/.bashrc) — source AFTER prompt/history tools like starship or atuin
-for _f in ${HOME}/.config/herdr/plugins/github/davidolrik.titles-*/shell/hook.bash; do
-  [ -f "$_f" ] && { source "$_f"; break; }
-done
+# bash (~/.bashrc) — AFTER prompt/history tools like starship or atuin
+eval "$(${HOME}/.config/herdr/plugins/github/davidolrik.titles-*/bin/herdr-titles init bash 2>/dev/null)"
 ```
 
-```sh
+```fish
 # fish (~/.config/fish/config.fish)
-for _f in ~/.config/herdr/plugins/github/davidolrik.titles-*/shell/hook.fish
-    source $_f; break
-end
+~/.config/herdr/plugins/github/davidolrik.titles-*/bin/herdr-titles init fish 2>/dev/null | source
 ```
+
+A missing plugin makes each line a silent no-op. (Sourcing the files under
+`shell/` directly still works too — `init` emits those same hooks.)
+
+### The pane title your shell publishes
+
+`terminal_titles` names a tab after the pane's *terminal title* — so it only
+does anything if something in the pane sets one. fish does by default
+(`fish_title`); **zsh and bash set no terminal title on their own**, so their
+integration publishes one every prompt: the cwd basename by default. To choose
+the text, define `_herdr_titles_title` in your shell config *before* the
+integration line (say `user@host: dir` over ssh); to keep your shell's own
+title handling, set `HERDR_TITLES_NO_TITLE=1`. Programs that manage the title
+themselves (nvim with `title` on, ssh) take over while they run, and programs
+that set none (helix, less) name the tab by program via the hook. The title
+only ever names the pane — it never reaches the host window title, which this
+plugin owns.
 
 The hooks are no-ops outside a herdr pane, background every call so the
 prompt never blocks, and stay registered across re-sourcing. On bash they

@@ -67,4 +67,4 @@ command = ["./bin/herdr-titles", "reset"]
 id = "init-config"
 title = "Window title: create default config file"
 contexts = ["global"]
-command = ["./bin/herdr-titles", "init"]
+command = ["./bin/herdr-titles", "init-config"]

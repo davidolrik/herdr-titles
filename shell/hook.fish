@@ -10,10 +10,12 @@
 # No-ops outside a herdr pane ($HERDR_PANE_ID) and when the engine is not
 # found. Runs are backgrounded so the prompt never blocks on herdr.
 
-# Resolve the engine next to this file and stash it in a GLOBAL: fish function
-# bodies do not close over sourcing-time locals, but they do see globals at
-# call time. `status current-filename` is this sourced file's path.
-set -g _hwt_bin (dirname (dirname (status current-filename)))/bin/herdr-titles
+# Resolve the engine and stash it in a GLOBAL: fish function bodies do not
+# close over sourcing-time locals, but they do see globals at call time. When
+# sourced from the plugin dir this reads the sourced file's own path;
+# `herdr-titles init fish` emits this same hook with the engine's absolute
+# path baked in on this line instead.
+set -g _hwt_bin (dirname (dirname (status current-filename)))/bin/herdr-titles # HWT_BIN
 
 if test -n "$HERDR_PANE_ID"; and test -x "$_hwt_bin"
     # The first word only names a program when `type --type` says "file" (a
@@ -37,3 +39,8 @@ if test -n "$HERDR_PANE_ID"; and test -x "$_hwt_bin"
         disown 2>/dev/null
     end
 end
+
+# Pane title for `tabs { terminal_titles = true }`: fish already sets a
+# terminal title every prompt through its fish_title function, which herdr
+# records as the pane's title — so nothing to add here. To choose the text,
+# define your own fish_title (see `help fish_title`).

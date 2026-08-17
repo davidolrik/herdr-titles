@@ -17,8 +17,8 @@
 #
 # No-ops outside a herdr pane and when the engine is not found. Needs bash 3.1+.
 
-_hwt_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)
-_hwt_bin="$_hwt_root/bin/herdr-titles"
+# (`herdr-titles init bash` emits this same hook with the path baked in here.)
+_hwt_bin="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." 2>/dev/null && pwd)/bin/herdr-titles" # HWT_BIN
 
 # The _hwt_installed latch makes re-sourcing (e.g. `source ~/.bashrc`) a no-op,
 # so PROMPT_COMMAND never grows a second entry and we never double-register.
@@ -38,7 +38,19 @@ if [[ -n ${HERDR_PANE_ID:-} && -x $_hwt_bin && -z ${_hwt_installed:-} ]]; then
       ("$_hwt_bin" preexec "$1" shell >/dev/null 2>&1 &)
     fi
   }
-  _hwt_precmd() { ("$_hwt_bin" precmd bash >/dev/null 2>&1 &); }
+  _hwt_precmd() {
+    ("$_hwt_bin" precmd bash >/dev/null 2>&1 &)
+    [[ -z ${HERDR_TITLES_NO_TITLE:-} ]] && _herdr_titles_precmd
+  }
+
+  # Pane title for `tabs { terminal_titles = true }`: bash sets no terminal
+  # title on its own, so publish one every prompt (OSC 2, which herdr records
+  # as the pane's title — it never reaches the host window title). Define
+  # _herdr_titles_title yourself BEFORE this hook to choose the text (it
+  # defaults to the cwd basename), or set HERDR_TITLES_NO_TITLE=1 to keep
+  # your shell's own title handling. Harmless when terminal_titles is off.
+  declare -F _herdr_titles_title >/dev/null 2>&1 || _herdr_titles_title() { printf '%s' "${PWD##*/}"; }
+  _herdr_titles_precmd() { printf '\e]2;%s\a' "$(_herdr_titles_title)" > /dev/tty 2>/dev/null; }
 
   if declare -p preexec_functions >/dev/null 2>&1 || declare -p precmd_functions >/dev/null 2>&1; then
     # A preexec framework (bash-preexec / ble.sh / atuin) owns the trap; just

@@ -142,7 +142,10 @@ tabs {
 	}
 }
 
-func TestInitSubcommand(t *testing.T) {
+// init-config writes the documented default config (the init-config action).
+// The bare `init` verb belongs to the shell integration (`init <shell>`), so
+// with no shell it must fail with usage rather than silently write a config.
+func TestInitConfigSubcommand(t *testing.T) {
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "herdr-titles")
 	build := exec.Command("go", "build", "-o", bin, ".")
@@ -151,25 +154,151 @@ func TestInitSubcommand(t *testing.T) {
 	}
 	configDir := filepath.Join(dir, "config")
 
-	cmd := exec.Command(bin, "init")
+	cmd := exec.Command(bin, "init-config")
 	cmd.Env = append(os.Environ(), "HERDR_PLUGIN_CONFIG_DIR="+configDir)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("init: %v\n%s", err, out)
+		t.Fatalf("init-config: %v\n%s", err, out)
 	}
 	wantPath := filepath.Join(configDir, "config.hcl")
 	if !strings.Contains(string(out), wantPath) {
-		t.Errorf("init output %q does not mention %q", out, wantPath)
+		t.Errorf("init-config output %q does not mention %q", out, wantPath)
 	}
 	if _, err := os.Stat(wantPath); err != nil {
 		t.Fatalf("config.hcl not created: %v", err)
 	}
 
 	// Second invocation refuses to overwrite and exits non-zero.
-	cmd = exec.Command(bin, "init")
+	cmd = exec.Command(bin, "init-config")
 	cmd.Env = append(os.Environ(), "HERDR_PLUGIN_CONFIG_DIR="+configDir)
 	if out, err := cmd.CombinedOutput(); err == nil {
-		t.Fatalf("second init succeeded, want refusal; output: %s", out)
+		t.Fatalf("second init-config succeeded, want refusal; output: %s", out)
+	}
+
+	// Bare `init` is the shell integration and needs a shell: usage error,
+	// no config written.
+	otherDir := filepath.Join(dir, "other")
+	cmd = exec.Command(bin, "init")
+	cmd.Env = append(os.Environ(), "HERDR_PLUGIN_CONFIG_DIR="+otherDir)
+	out, err = cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("bare init succeeded, want usage error; output: %s", out)
+	}
+	if !strings.Contains(string(out), "usage") && !strings.Contains(string(out), "init <shell>") {
+		t.Errorf("bare init error %q does not show usage", out)
+	}
+	if _, err := os.Stat(filepath.Join(otherDir, "config.hcl")); err == nil {
+		t.Errorf("bare init wrote a config file")
+	}
+}
+
+// `init <shell>` prints the shell integration for eval: the hook script with
+// THIS binary's absolute path baked in, so the emitted script needs none of
+// the sourced-file self-location the on-disk hooks use (which breaks under
+// eval, where there is no sourced file). Each script must parse under its
+// real shell.
+func TestInitShellEmitsHookWithBinaryPath(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "herdr-titles")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	shells := map[string]struct {
+		check   []string // syntax-check invocation, script on stdin
+		selfLoc string   // sourced-file self-location that must NOT be emitted
+	}{
+		"zsh":  {[]string{"zsh", "-n"}, "${(%):-%N}"},
+		"bash": {[]string{"bash", "-n"}, "BASH_SOURCE"},
+		"fish": {[]string{"fish", "--no-execute"}, "status current-filename"},
+	}
+	for shell, want := range shells {
+		t.Run(shell, func(t *testing.T) {
+			out, err := exec.Command(bin, "init", shell).Output()
+			if err != nil {
+				t.Fatalf("init %s: %v", shell, err)
+			}
+			script := string(out)
+			if !strings.Contains(script, bin) {
+				t.Errorf("init %s output does not bake in the binary path %q", shell, bin)
+			}
+			if strings.Contains(script, want.selfLoc) {
+				t.Errorf("init %s output still self-locates via %q", shell, want.selfLoc)
+			}
+			if _, err := exec.LookPath(want.check[0]); err != nil {
+				t.Skipf("%s not installed", want.check[0])
+			}
+			chk := exec.Command(want.check[0], want.check[1:]...)
+			chk.Stdin = strings.NewReader(script)
+			if res, err := chk.CombinedOutput(); err != nil {
+				t.Fatalf("init %s output does not parse under %s: %v\n%s", shell, want.check[0], err, res)
+			}
+		})
+	}
+
+	// Unknown shell: usage error, nothing on stdout.
+	out, err := exec.Command(bin, "init", "tcsh").CombinedOutput()
+	if err == nil {
+		t.Fatalf("init tcsh succeeded; output: %s", out)
+	}
+	if !strings.Contains(string(out), "zsh") {
+		t.Errorf("init tcsh error %q does not list supported shells", out)
+	}
+}
+
+// The emitted zsh/bash integration also publishes a pane title every prompt
+// (OSC 2, from the cwd basename by default), because those shells set no
+// terminal title on their own and terminal_titles has nothing to read
+// otherwise. It is user-overridable: define _herdr_titles_title yourself, or
+// set HERDR_TITLES_NO_TITLE=1 to keep your shell's own title. fish already
+// sets a title through fish_title, so its integration only documents that.
+func TestInitShellEmitsTitleSetter(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "herdr-titles")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	for _, shell := range []string{"zsh", "bash"} {
+		out, err := exec.Command(bin, "init", shell).Output()
+		if err != nil {
+			t.Fatalf("init %s: %v", shell, err)
+		}
+		script := string(out)
+		for _, want := range []string{"_herdr_titles_title", "HERDR_TITLES_NO_TITLE", `\e]2;`} {
+			if !strings.Contains(script, want) {
+				t.Errorf("init %s output lacks %q", shell, want)
+			}
+		}
+	}
+	out, err := exec.Command(bin, "init", "fish").Output()
+	if err != nil {
+		t.Fatalf("init fish: %v", err)
+	}
+	if strings.Contains(string(out), "_herdr_titles_title") {
+		t.Errorf("init fish emits a title setter; fish_title already owns the title")
+	}
+	if !strings.Contains(string(out), "fish_title") {
+		t.Errorf("init fish output does not point at fish_title")
+	}
+
+	// zsh: the default title is the cwd basename; a user-defined
+	// _herdr_titles_title wins; the opt-out defines nothing.
+	zsh := func(env, body string) string {
+		t.Helper()
+		cmd := exec.Command("zsh", "-c", env+` eval "$(`+bin+` init zsh)"; `+body)
+		res, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("zsh: %v\n%s", err, res)
+		}
+		return strings.TrimSpace(string(res))
+	}
+	if got := zsh(`HERDR_PANE_ID=x HERDR_TAB_ID=x`, `cd /tmp && print -r -- "$(_herdr_titles_title)"`); got != "tmp" {
+		t.Errorf("default title = %q, want cwd basename tmp", got)
+	}
+	if got := zsh(`HERDR_PANE_ID=x HERDR_TAB_ID=x`, `_herdr_titles_title() { print mine }; eval "$(`+bin+` init zsh)"; print -r -- "$(_herdr_titles_title)"`); got != "mine" {
+		t.Errorf("user override lost = %q, want mine", got)
+	}
+	if got := zsh(`HERDR_PANE_ID=x HERDR_TAB_ID=x HERDR_TITLES_NO_TITLE=1`, `print -r -- "${+functions[_herdr_titles_precmd]}"`); got != "0" {
+		t.Errorf("opt-out still defined the title precmd: %q", got)
 	}
 }
 

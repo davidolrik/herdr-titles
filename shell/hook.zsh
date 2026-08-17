@@ -15,12 +15,11 @@
 # when the engine is not found next to this file. Runs are backgrounded so the
 # prompt never blocks on herdr.
 
-# Resolve the engine next to this file, so the hook works no matter where the
-# plugin is installed. ${(%):-%N} is the zsh-standard way to read the sourced
-# file's own path and is immune to FUNCTION_ARGZERO being toggled, unlike $0.
-_hwt_self="${(%):-%N}"
-_hwt_bin="${_hwt_self:A:h:h}/bin/herdr-titles"
-unset _hwt_self
+# Resolve the engine. When sourced from the plugin dir this reads the sourced
+# file's own path (the zsh prompt-expansion form of it, immune to
+# FUNCTION_ARGZERO being toggled, unlike $0); `herdr-titles init zsh` emits
+# this same hook with the engine's absolute path baked in on this line instead.
+_hwt_bin="${${(%):-%N}:A:h:h}/bin/herdr-titles" # HWT_BIN
 
 if [[ -n ${HERDR_PANE_ID:-} && -x $_hwt_bin ]]; then
   # Background in a subshell so the interactive shell never prints the
@@ -48,4 +47,16 @@ if [[ -n ${HERDR_PANE_ID:-} && -x $_hwt_bin ]]; then
   autoload -Uz add-zsh-hook
   add-zsh-hook preexec _hwt_preexec   # add-zsh-hook is idempotent on re-source
   add-zsh-hook precmd  _hwt_precmd
+
+  # Pane title for `tabs { terminal_titles = true }`: zsh sets no terminal
+  # title on its own, so publish one every prompt (OSC 2, which herdr records
+  # as the pane's title — it never reaches the host window title). Define
+  # _herdr_titles_title yourself BEFORE this hook to choose the text (it
+  # defaults to the cwd basename), or set HERDR_TITLES_NO_TITLE=1 to keep
+  # your shell's own title handling. Harmless when terminal_titles is off.
+  if [[ -z ${HERDR_TITLES_NO_TITLE:-} ]]; then
+    (( ${+functions[_herdr_titles_title]} )) || _herdr_titles_title() { print -r -- "${PWD:t}"; }
+    _herdr_titles_precmd() { print -n "\e]2;$(_herdr_titles_title)\a" > /dev/tty 2>/dev/null; }
+    add-zsh-hook precmd _herdr_titles_precmd
+  fi
 fi

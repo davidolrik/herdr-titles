@@ -423,8 +423,10 @@ func main() {
 	}
 	var err error
 	switch event {
-	case "init":
+	case "init-config":
 		err = runInit()
+	case "init":
+		err = runShellInit(os.Args[2:])
 	case "refresh-all":
 		err = runRefreshAll()
 	case "watch":
