@@ -282,7 +282,17 @@ func runFast(mode string, args []string) error {
 				return nil
 			})
 		}
+		if mode == "preexec" {
+			// Shells set the title at the prompt, so preexec sees the previous
+			// prompt's title: applying it is a no-op at best, and lingering here
+			// would only double the subscriber processes per command — precmd's
+			// linger covers the same window.
+			return apply()
+		}
 		conn, reader, subErr := subscribeEvents(sock, []string{"pane.updated"}, hookLingerMax)
+		if subErr == nil {
+			defer conn.Close()
+		}
 		if err := apply(); err != nil {
 			return err
 		}
@@ -290,7 +300,6 @@ func runFast(mode string, args []string) error {
 			// Lingering is best-effort, so just exit if we can't subscribe.
 			return nil
 		}
-		defer conn.Close()
 		return lingerPaneTitles(conn, reader, paneID, hookLingerQuiet, hookLingerMax, apply)
 	}
 

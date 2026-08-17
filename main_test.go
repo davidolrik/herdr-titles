@@ -243,6 +243,49 @@ func TestRunFastDaemonlessEscalatesTabBlip(t *testing.T) {
 	}
 }
 
+// Only precmd lingers: shells set the title at the prompt, so preexec sees
+// the previous prompt's title, and a preexec subscriber would just double the
+// hook processes per command for a window precmd's linger already covers.
+func TestRunFastDaemonlessLingersOnlyAtPrecmd(t *testing.T) {
+	api := newFakeAPI(t)
+	configDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(configDir, "config.hcl"),
+		[]byte("template = \"x\"\ntabs {\n  terminal_titles = true\n  watch_titles = false\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HERDR_PLUGIN_CONFIG_DIR", configDir)
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	t.Setenv("HERDR_SESSION", "insess")
+	t.Setenv("HERDR_TAB_ID", "w1:t1")
+	t.Setenv("HERDR_PANE_ID", "w1:p1")
+	t.Setenv("HERDR_SOCKET_PATH", api.sockPath)
+	api.setTab("w1:t1", "1")
+	api.setPaneTitle("w1:p1", "w1:t1", "", "make -j all")
+
+	subs := func() int {
+		api.mu.Lock()
+		defer api.mu.Unlock()
+		return api.subscribes
+	}
+	if err := runFast("preexec", []string{"make -j all"}); err != nil {
+		t.Fatalf("runFast preexec: %v", err)
+	}
+	if n := subs(); n != 0 {
+		t.Fatalf("preexec subscribed %d times, want 0", n)
+	}
+	// preexec still applies the current title, it just doesn't linger.
+	_, renames, _ := api.recorded()
+	if len(renames) != 1 || renames[0] != "w1:t1=make -j all" {
+		t.Fatalf("preexec renames = %v, want [w1:t1=make -j all]", renames)
+	}
+	if err := runFast("precmd", nil); err != nil {
+		t.Fatalf("runFast precmd: %v", err)
+	}
+	if n := subs(); n != 1 {
+		t.Fatalf("precmd subscribed %d times, want 1", n)
+	}
+}
+
 func TestLingerPaneTitles(t *testing.T) {
 	client, server := net.Pipe()
 	defer client.Close()

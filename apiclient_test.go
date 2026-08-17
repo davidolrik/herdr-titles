@@ -31,6 +31,7 @@ type fakeAPI struct {
 	renames       []string
 	snapshots     int
 	infoReqs      int
+	subscribes    int // events.subscribe attempts (rejected: the fake streams no events)
 
 	notifications []string // recorded "title|body" per notification.show
 	notifBusy     int      // answer "busy" this many times before showing
@@ -179,6 +180,9 @@ func (f *fakeAPI) serve() {
 					return
 				}
 				fmt.Fprintf(c, `{"id":%q,"result":{"process_info":%s}}`+"\n", req.ID, info)
+			case "events.subscribe":
+				f.subscribes++ // f.mu is already held for the request
+				fail("unknown_method", req.Method)
 			default:
 				fail("unknown_method", req.Method)
 			}
