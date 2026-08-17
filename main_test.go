@@ -142,6 +142,16 @@ tabs {
 	}
 }
 
+// requireShell skips the test when shell is not installed: the emitted
+// integration is proven live in zsh/bash/fish where they exist (a dev
+// machine, macOS CI); a Linux runner without zsh must not fail on that.
+func requireShell(t *testing.T, shell string) {
+	t.Helper()
+	if _, err := exec.LookPath(shell); err != nil {
+		t.Skipf("%s not installed", shell)
+	}
+}
+
 // init-config writes the documented default config (the init-config action).
 // The bare `init` verb belongs to the shell integration (`init <shell>`), so
 // with no shell it must fail with usage rather than silently write a config.
@@ -280,6 +290,7 @@ func TestInitShellEmitsTitleSetter(t *testing.T) {
 		t.Errorf("init fish output does not point at fish_title")
 	}
 
+	requireShell(t, "zsh")
 	// zsh: the default title is the cwd basename; a user-defined
 	// _herdr_titles_title wins; the opt-out defines nothing. An icons-off
 	// config keeps this hermetic (with icons on, `init` bakes the shell's
@@ -316,6 +327,7 @@ func TestInitShellEmitsTitleSetter(t *testing.T) {
 // honoring icons.enabled, style, and a custom icons.map entry — and bakes in
 // nothing when icons are off.
 func TestInitShellBakesShellIconIntoPromptTitle(t *testing.T) {
+	requireShell(t, "zsh")
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "herdr-titles")
 	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
@@ -365,6 +377,7 @@ func TestInitShellBakesShellIconIntoPromptTitle(t *testing.T) {
 // the shell's cwd title stands — no shell-name flash. A program that sets its
 // own title (nvim) simply overrides it moments later.
 func TestInitZshPreexecPublishesProgramTitle(t *testing.T) {
+	requireShell(t, "zsh")
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "herdr-titles")
 	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
@@ -389,8 +402,10 @@ func TestInitZshPreexecPublishesProgramTitle(t *testing.T) {
 		got, _ := os.ReadFile(sink)
 		return string(got)
 	}
-	if got := run("hx main.go"); got != "\x1b]2;hx\a" {
-		t.Errorf("real program: title write = %q, want OSC 2 hx", got)
+	// `env` exists everywhere (unlike an editor), so the test has no hidden
+	// dependency on what is installed on the machine.
+	if got := run("env FOO=1 true"); got != "\x1b]2;env\a" {
+		t.Errorf("real program: title write = %q, want OSC 2 env", got)
 	}
 	if got := run("/usr/bin/env"); got != "\x1b]2;env\a" {
 		t.Errorf("absolute path: title write = %q, want basename env", got)
@@ -399,7 +414,7 @@ func TestInitZshPreexecPublishesProgramTitle(t *testing.T) {
 		t.Errorf("builtin cd: title write = %q, want nothing (cwd title stands)", got)
 	}
 	// Opt-out disables the program title too, not just the prompt title.
-	cmd := exec.Command("zsh", "-c", `eval "$(`+bin+` init zsh)"; _hwt_preexec 'hx' 'hx'; sleep 0.1`)
+	cmd := exec.Command("zsh", "-c", `eval "$(`+bin+` init zsh)"; _hwt_preexec 'env' 'env'; sleep 0.1`)
 	if err := os.WriteFile(sink, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
