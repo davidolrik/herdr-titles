@@ -281,10 +281,17 @@ func TestInitShellEmitsTitleSetter(t *testing.T) {
 	}
 
 	// zsh: the default title is the cwd basename; a user-defined
-	// _herdr_titles_title wins; the opt-out defines nothing.
+	// _herdr_titles_title wins; the opt-out defines nothing. An icons-off
+	// config keeps this hermetic (with icons on, `init` bakes the shell's
+	// glyph into the default title — covered by its own test).
+	plainCfg := t.TempDir()
+	if err := os.WriteFile(filepath.Join(plainCfg, "config.hcl"), []byte("template = \"x\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	zsh := func(env, body string) string {
 		t.Helper()
 		cmd := exec.Command("zsh", "-c", env+` eval "$(`+bin+` init zsh)"; `+body)
+		cmd.Env = append(os.Environ(), "HERDR_PLUGIN_CONFIG_DIR="+plainCfg)
 		res, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("zsh: %v\n%s", err, res)
@@ -299,6 +306,110 @@ func TestInitShellEmitsTitleSetter(t *testing.T) {
 	}
 	if got := zsh(`HERDR_PANE_ID=x HERDR_TAB_ID=x HERDR_TITLES_NO_TITLE=1`, `print -r -- "${+functions[_herdr_titles_precmd]}"`); got != "0" {
 		t.Errorf("opt-out still defined the title precmd: %q", got)
+	}
+}
+
+// The prompt title the zsh/bash integration publishes carries the SHELL's
+// icon, so a plain-shell tab named after its cwd looks like every other tab
+// (program tabs get their program's icon from the plugin). The shell can't
+// read the HCL config, so `init` bakes the resolved glyph in at emit time —
+// honoring icons.enabled, style, and a custom icons.map entry — and bakes in
+// nothing when icons are off.
+func TestInitShellBakesShellIconIntoPromptTitle(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "herdr-titles")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	sink := filepath.Join(dir, "tty.out")
+	promptTitle := func(config string) string {
+		t.Helper()
+		configDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(configDir, "config.hcl"), []byte(config), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(sink, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("zsh", "-c", `eval "$(`+bin+` init zsh)"; cd /tmp; _herdr_titles_precmd; sleep 0.05`)
+		cmd.Env = append(os.Environ(), "HERDR_PANE_ID=x", "HERDR_TAB_ID=x", "HERDR_TITLES_TTY="+sink,
+			"HERDR_PLUGIN_CONFIG_DIR="+configDir, "HERDR_SOCKET_PATH=/nonexistent/herdr.sock")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("zsh: %v\n%s", err, out)
+		}
+		got, _ := os.ReadFile(sink)
+		return string(got)
+	}
+	// Icons on (default style name_and_icon): the builtin zsh glyph + cwd.
+	if got := promptTitle("template = \"x\"\ntabs {\n  icons {\n    enabled = true\n  }\n}\n"); got != "\x1b]2;\ue795 tmp\a" {
+		t.Errorf("icons on: prompt title = %q, want zsh glyph + tmp", got)
+	}
+	// A custom map entry for the shell wins.
+	if got := promptTitle("template = \"x\"\ntabs {\n  icons {\n    enabled = true\n    map = { zsh = \"Z\" }\n  }\n}\n"); got != "\x1b]2;Z tmp\a" {
+		t.Errorf("custom map: prompt title = %q, want Z tmp", got)
+	}
+	// Icons off: bare cwd.
+	if got := promptTitle("template = \"x\"\n"); got != "\x1b]2;tmp\a" {
+		t.Errorf("icons off: prompt title = %q, want bare tmp", got)
+	}
+	// style = "name": no glyph even with icons on.
+	if got := promptTitle("template = \"x\"\ntabs {\n  icons {\n    enabled = true\n    style = \"name\"\n  }\n}\n"); got != "\x1b]2;tmp\a" {
+		t.Errorf("style=name: prompt title = %q, want bare tmp", got)
+	}
+}
+
+// Under terminal_titles the program a command starts reaches the tab through
+// the pane TITLE (the daemon is the single writer): the zsh integration's
+// preexec publishes the resolved program name as an OSC 2 title for a real
+// program, and publishes nothing for a builtin/function (cd, z, aliases) so
+// the shell's cwd title stands — no shell-name flash. A program that sets its
+// own title (nvim) simply overrides it moments later.
+func TestInitZshPreexecPublishesProgramTitle(t *testing.T) {
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "herdr-titles")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+	// Capture what preexec writes to the terminal by pointing the title
+	// sink at a file: the hook writes titles to $HERDR_TITLES_TTY when set
+	// (a test seam; it defaults to /dev/tty).
+	sink := filepath.Join(dir, "tty.out")
+	run := func(cmdline string) string {
+		t.Helper()
+		if err := os.WriteFile(sink, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command("zsh", "-c",
+			`eval "$(`+bin+` init zsh)"; _hwt_preexec `+shellQuote(cmdline)+` `+shellQuote(cmdline)+`; sleep 0.1`)
+		cmd.Env = append(os.Environ(), "HERDR_PANE_ID=x", "HERDR_TAB_ID=x", "HERDR_TITLES_TTY="+sink,
+			"HERDR_SOCKET_PATH=/nonexistent/herdr.sock")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("zsh: %v\n%s", err, out)
+		}
+		got, _ := os.ReadFile(sink)
+		return string(got)
+	}
+	if got := run("hx main.go"); got != "\x1b]2;hx\a" {
+		t.Errorf("real program: title write = %q, want OSC 2 hx", got)
+	}
+	if got := run("/usr/bin/env"); got != "\x1b]2;env\a" {
+		t.Errorf("absolute path: title write = %q, want basename env", got)
+	}
+	if got := run("cd /tmp"); got != "" {
+		t.Errorf("builtin cd: title write = %q, want nothing (cwd title stands)", got)
+	}
+	// Opt-out disables the program title too, not just the prompt title.
+	cmd := exec.Command("zsh", "-c", `eval "$(`+bin+` init zsh)"; _hwt_preexec 'hx' 'hx'; sleep 0.1`)
+	if err := os.WriteFile(sink, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd.Env = append(os.Environ(), "HERDR_PANE_ID=x", "HERDR_TAB_ID=x", "HERDR_TITLES_TTY="+sink,
+		"HERDR_TITLES_NO_TITLE=1", "HERDR_SOCKET_PATH=/nonexistent/herdr.sock")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("zsh: %v\n%s", err, out)
+	}
+	if got, _ := os.ReadFile(sink); len(got) != 0 {
+		t.Errorf("HERDR_TITLES_NO_TITLE=1 still published a program title: %q", got)
 	}
 }
 
@@ -620,14 +731,16 @@ func TestFastPath(t *testing.T) {
 		t.Fatalf("disabled tabs still renamed: %v", renames)
 	}
 
-	// terminal titles with the daemon (watch_titles defaults true). The
-	// daemon only reacts to events, and herdr has no "foreground command
-	// changed" event, so a program that sets NO title (helix, less, most CLI
-	// tools) is invisible to it: the hook is the only thing that can name
-	// the tab. So on a pane with no terminal title the hook still renames by
-	// program. It must also still probe for a dead daemon; daemonAlive's
-	// O_CREATE open leaves the lock file behind, so its reappearance proves
-	// the probe ran.
+	// terminal titles with the daemon (watch_titles defaults true): the hook
+	// never renames — the daemon is the single writer for these panes, and
+	// every rename the plugin makes fires tab.renamed, which schedules a full
+	// pass that recomputes from the pane's title; a hook rename the title
+	// disagrees with is simply undone, so the two must never diverge. The
+	// program a command starts is conveyed through the pane TITLE instead:
+	// the shell integration publishes it at preexec (see shell/hook.*), and
+	// the daemon's pane.updated stream applies it. The hook still probes for
+	// a dead daemon; daemonAlive's O_CREATE open leaves the lock file behind,
+	// so its reappearance proves the probe ran.
 	if err := os.WriteFile(filepath.Join(configDir, "config.hcl"),
 		[]byte("template = \"x\"\ntabs { terminal_titles = true }\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -636,38 +749,20 @@ func TestFastPath(t *testing.T) {
 	if err := os.Remove(lockPath); err != nil {
 		t.Fatalf("lock file missing before terminal-titles run: %v", err)
 	}
-	api.setPaneTitle("w1:p1", "w1:t1", "", "") // no terminal title (helix)
-	run("preexec", "hx x")
-	_, renames, _ = api.recorded()
-	if len(renames) != before+1 || renames[before] != "w1:t1=hx" {
-		t.Fatalf("terminal_titles=true, untitled pane: renames = %v, want trailing w1:t1=hx", renames)
+	for _, pane := range []struct{ title, why string }{
+		{"", "untitled"},
+		{"user@host: ~/proj", "titled"},
+	} {
+		api.setPaneTitle("w1:p1", "w1:t1", "", pane.title)
+		run("preexec", "hx x")
+		run("precmd", "zsh")
+		_, renames, _ = api.recorded()
+		if len(renames) != before {
+			t.Fatalf("terminal_titles=true, %s pane: hook renamed (%v); the daemon is the only writer", pane.why, renames)
+		}
 	}
 	if _, err := os.Stat(lockPath); err != nil {
 		t.Errorf("terminal-titles fast path skipped the daemon probe: %v", err)
-	}
-	before = len(renames)
-
-	// A titled pane, command starting (preexec): the title is the SHELL's,
-	// set for the prompt that just ended — it is stale for the command now
-	// starting, and if that command sets no title (helix) nothing else ever
-	// names the tab. So preexec renames by program regardless of the title;
-	// if the program then sets its own title, the daemon's pane.updated
-	// applies it on top (title still wins once one arrives).
-	api.setPaneTitle("w1:p1", "w1:t1", "", "user@host: ~/proj")
-	run("preexec", "lazygit")
-	_, renames, _ = api.recorded()
-	if len(renames) != before+1 || renames[before] != "w1:t1=lazygit" {
-		t.Fatalf("terminal_titles=true, titled pane at preexec: renames = %v, want trailing w1:t1=lazygit", renames)
-	}
-	before = len(renames)
-
-	// A titled pane, back at the prompt (precmd): the shell is about to
-	// republish its title and the daemon will apply it, so a process-derived
-	// rename to the shell name would only flap. precmd yields.
-	run("precmd", "zsh")
-	_, renames, _ = api.recorded()
-	if len(renames) != before {
-		t.Fatalf("terminal_titles=true, titled pane at precmd: hook renamed instead of yielding: %v", renames)
 	}
 
 	// terminal titles without the daemon (watch_titles=false): the hook is

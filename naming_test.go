@@ -158,6 +158,46 @@ func TestFormatTerminalTitle(t *testing.T) {
 	}
 }
 
+// A title that is exactly a known program name — what the shell integration
+// publishes when a command starts (hx, nvim, git) — gets that program's icon,
+// so titled tabs look like process-named ones. Anything else (a prompt's cwd,
+// user@host, free text) gets NO icon, and never the fallback glyph: only an
+// exact icon-table hit earns one.
+func TestFormatTerminalTitleIconsKnownPrograms(t *testing.T) {
+	cfg := namingConfig()
+	cfg.MaxNameLen = 40
+	cfg.Icons.Enabled = true
+	cfg.Icons.Style = "name_and_icon"
+	cfg.Icons.Fallback = "\uf120" // a fallback glyph that must NOT leak onto titles
+	cfg.Icons.Map = map[string]string{"hx": "H", "nvim": "V"}
+
+	if got := FormatTerminalTitle("hx", cfg); got != "H hx" {
+		t.Errorf("program title hx = %q, want icon-prefixed", got)
+	}
+	if got := FormatTerminalTitle("herdr-titles", cfg); got != "herdr-titles" {
+		t.Errorf("cwd title = %q, want plain (no icon, no fallback)", got)
+	}
+	if got := FormatTerminalTitle("user@host: ~/proj", cfg); got != "user@host: ~/proj" {
+		t.Errorf("prompt title = %q, want plain", got)
+	}
+	// Style "icon" collapses to the glyph alone, like process names do.
+	cfg.Icons.Style = "icon"
+	if got := FormatTerminalTitle("nvim", cfg); got != "V" {
+		t.Errorf("style=icon program title = %q, want glyph only", got)
+	}
+	// The shell's own name stays plain, as it does on the process-name path.
+	cfg.Icons.Style = "name_and_icon"
+	cfg.ShellName = "zsh"
+	if got := FormatTerminalTitle("zsh", cfg); got != "zsh" {
+		t.Errorf("shell-name title = %q, want plain", got)
+	}
+	// Icons off: plain, even for a known program.
+	cfg.Icons.Enabled = false
+	if got := FormatTerminalTitle("hx", cfg); got != "hx" {
+		t.Errorf("icons disabled = %q, want plain", got)
+	}
+}
+
 func TestTitleTabName(t *testing.T) {
 	cases := []struct {
 		name                    string

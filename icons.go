@@ -142,6 +142,19 @@ func init() {
 // programIcon resolves a program's glyph: user map override, then the builtin
 // table, then the configured fallback. An empty program yields "" on purpose --
 // callers only prepend a non-empty glyph.
+// knownProgramIcon is programIcon without the fallback: the glyph for a
+// program the icon table actually names, or "" — for text that merely
+// might be a program name (a pane title), only an exact hit earns an icon.
+func knownProgramIcon(program string, icons *IconsConfig) string {
+	if glyph, ok := icons.Map[program]; ok {
+		return glyph
+	}
+	if glyph, ok := builtinIcons[program]; ok {
+		return glyph
+	}
+	return ""
+}
+
 func programIcon(program string, icons *IconsConfig) string {
 	if program == "" {
 		return ""

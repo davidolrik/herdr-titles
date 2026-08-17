@@ -195,7 +195,25 @@ func FormatAgentTitle(agentKind, title string, cfg *TabsConfig) string {
 // FormatTerminalTitle names a tab after its pane's terminal title.
 // No icon is added since the program is unknown.
 func FormatTerminalTitle(title string, cfg *TabsConfig) string {
-	return truncateRunes(applySubstitutions(title, cfg.Substitutions), cfg.MaxNameLen)
+	name := applySubstitutions(title, cfg.Substitutions)
+	// A title that is exactly a known program name — what the shell
+	// integration publishes when a command starts — gets that program's
+	// icon, so titled tabs look like process-named ones. Free text (a
+	// prompt's cwd, user@host) gets none, and never the fallback glyph.
+	// The shell's own name stays plain here too, as it does for process names.
+	if cfg.Icons.Enabled && title != cfg.ShellName {
+		if glyph := knownProgramIcon(title, &cfg.Icons); glyph != "" {
+			switch cfg.Icons.Style {
+			case "icon":
+				name = glyph
+			case "name":
+				// plain
+			default: // name_and_icon
+				name = glyph + " " + name
+			}
+		}
+	}
+	return truncateRunes(name, cfg.MaxNameLen)
 }
 
 // titleTabName decides title precedence for a pane: agent session title

@@ -206,20 +206,6 @@ func lingerPaneTitles(conn net.Conn, reader *bufio.Reader, paneID string, quiet,
 	return apply()
 }
 
-// paneHasTitle reports whether a pane currently carries a terminal title. A
-// pane.get blip counts as titled: when in doubt the hook must yield rather
-// than risk a process-derived rename over a title the daemon owns.
-func paneHasTitle(sockPath, paneID string) bool {
-	if paneID == "" {
-		return true
-	}
-	p, ok := paneInfo(sockPath, paneID)
-	if !ok {
-		return true
-	}
-	return p.Title != ""
-}
-
 // runFast is the shell-hook path: rename just the invoking tab, right now.
 // mode "preexec" carries the typed command line (plus a "shell" marker when
 // the word is a construct and the pane's real process must be sampled); mode
@@ -238,22 +224,19 @@ func runFast(mode string, args []string) error {
 		return nil
 	}
 
-	// When using terminal titles, the daemon's pane.updated stream owns
-	// titles, and the hook just revives it when dead. But the daemon only
-	// reacts to events, and herdr has no "foreground command changed" event,
-	// so a program that sets NO title (helix, less, most CLI tools) is
-	// invisible to it: the hook is the only thing that can name that tab.
-	//
-	// At preexec the pane's title, if any, is the SHELL's — published for the
-	// prompt that just ended and stale for the command now starting — so
-	// preexec always falls through to the process-derived rename below; if
-	// the program then sets its own title, the daemon applies it on top
-	// (a title still wins once one arrives). At precmd the shell is about to
-	// republish its title and the daemon will apply it, so a rename to the
-	// shell name would only flap: precmd yields on a titled pane and renames
-	// only an untitled one. With the daemon disabled by watch_titles=false,
-	// the hook keeps just the focused tab up to date, and leaves the rest to
-	// the watchdog events' full passes.
+	// When using terminal titles with the daemon, the hook never renames:
+	// the daemon is the SINGLE writer for these panes. Every rename the
+	// plugin makes fires tab.renamed, which schedules a full pass that
+	// recomputes the tab from the pane's title — so a hook rename that the
+	// title disagrees with is simply undone a moment later (a flap), and the
+	// two writers must never diverge. Herdr has no "foreground command
+	// changed" event, so the program a command starts is conveyed through
+	// the pane's TITLE instead: the shell integration publishes it at preexec
+	// (see shell/hook.*), the daemon's pane.updated stream applies it, and a
+	// program that sets its own title (nvim) overrides it moments later. The
+	// hook here just revives a dead daemon. With the daemon disabled by
+	// watch_titles=false, the hook keeps just the focused tab up to date, and
+	// leaves the rest to the watchdog events' full passes.
 	if tabs.TerminalTitles {
 		stateDir := pluginStateDir()
 		if err := os.MkdirAll(stateDir, 0o755); err != nil {
@@ -262,10 +245,7 @@ func runFast(mode string, args []string) error {
 		session := envOr("HERDR_SESSION", "default")
 		if tabs.WatchTitles {
 			ensureDaemon(stateDir, session)
-			if mode == "precmd" && paneHasTitle(sessionSocketPath(), os.Getenv("HERDR_PANE_ID")) {
-				return nil // the shell's title is coming; the daemon owns it
-			}
-			// Fall through to the process-derived rename.
+			return nil
 		} else {
 			// Subscribe before reading to ensure we don't miss any events. Events
 			// that overlap the read are no-ops if they're the same as the current

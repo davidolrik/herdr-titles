@@ -164,15 +164,18 @@ prompt never blocks, and stay registered across re-sourcing. On bash they
 cooperate with bash-preexec/ble.sh/atuin instead of clobbering the DEBUG
 trap; see the comments in `shell/hook.bash`.
 
-With `tabs { terminal_titles = true }`, the daemon's `pane.updated` stream
-follows titles live — but herdr has no "foreground command changed" event, so
-a program that sets no title (helix, less, most CLI tools) is invisible to it.
-The hooks cover that: when a command starts, the hook names the tab by
-program — the pane's title at that moment is the shell's, published for the
-prompt that just ended — and if the program then sets its own title, the
-daemon applies it on top. Back at the prompt, the shell republishes its title
-and the daemon applies that, so the hook only steps in for an untitled pane.
-Keep the hooks installed. Without the daemon
+With `tabs { terminal_titles = true }`, the daemon is the **single writer**
+for tab names: its `pane.updated` stream follows the pane's title, and every
+rename the plugin makes fires `tab.renamed`, which reconciles the tab from
+that title again — so anything else naming the tab would just be undone.
+Herdr has no "foreground command changed" event, though, and a program that
+sets no title (helix, less, most CLI tools) would be invisible. The shell
+integration covers that through the title itself: when a real program starts,
+it publishes the program's name as the pane title (a builtin like `cd`
+publishes nothing, so the prompt's title stands), the daemon applies it, and
+a program that sets its own title (nvim, ssh) overrides it a moment later;
+back at the prompt the shell republishes its own title. Keep the integration
+installed. Without the daemon
 (`watch_titles = false`), each prompt's hook follows the pane's title
 for about two seconds and then exits, so a long-running command that keeps
 updating its title (a build reporting progress) is only reflected up to that

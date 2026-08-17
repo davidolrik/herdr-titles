@@ -23,10 +23,17 @@ if test -n "$HERDR_PANE_ID"; and test -x "$_hwt_bin"
     # externals in functions (`ls`, `cd`), so anything that is not a file gets
     # a "shell" marker telling the engine to sample the pane's real foreground
     # process instead.
+    # Under `tabs { terminal_titles = true }` the daemon is the single writer
+    # for the tab, and the program a command starts reaches it through the
+    # pane TITLE: for a real program, publish its basename as the title here
+    # (OSC 2). Functions publish nothing, so fish_title's text stands.
     function _hwt_preexec --on-event fish_preexec
         set -l word (string split -m 1 ' ' -- $argv[1])[1]
         set -l kind (type --type -- $word 2>/dev/null)
         if test "$kind" = file
+            if test -z "$HERDR_TITLES_NO_TITLE"
+                printf '\e]2;%s\a' (basename -- $word) > /dev/tty 2>/dev/null
+            end
             command "$_hwt_bin" preexec "$argv[1]" >/dev/null 2>&1 &
         else
             command "$_hwt_bin" preexec "$argv[1]" shell >/dev/null 2>&1 &

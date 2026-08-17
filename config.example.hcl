@@ -115,11 +115,16 @@ tabs {
 
   # Prefer using the terminal title (set by your shell or by programs like
   # nvim) rather than the foreground process name. The substitute rules and
-  # max_name_len above apply to the title, but no icons are added. Agent panes
+  # max_name_len above apply to the title. A title that is exactly a known
+  # program name (what the shell integration publishes when a command starts:
+  # hx, nvim, git) gets that program's icon; other text (a cwd, user@host)
+  # gets none. Agent panes
   # follow agent_titles if enabled, otherwise an agent's session title counts
-  # as an ordinary terminal title. You won't need to install the shell hooks
-  # if you also enable watch_titles. The running watch daemon reads this at
-  # startup: after changing it, restart the daemon (or the session).
+  # as an ordinary terminal title. Install the shell integration (`init
+  # <shell>`): it publishes the pane title this reads — a program's name when
+  # a command starts, your prompt's text (the cwd by default) at the prompt.
+  # The running watch daemon reads this at startup: after changing it,
+  # restart the daemon (or the session).
   terminal_titles = false
 
   # Run the per-session watch daemon. It follows agent title changes (e.g.

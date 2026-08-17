@@ -34,11 +34,26 @@ if [[ -n ${HERDR_PANE_ID:-} && -x $_hwt_bin ]]; then
   # command; whence -w classifies it. command/hashed keep the instant path,
   # anything else (function, builtin, reserved word, typo) gets a "shell"
   # marker telling the engine to sample the pane's real foreground process.
+  #
+  # Under `tabs { terminal_titles = true }` the daemon is the single writer
+  # for the tab, and the program a command starts reaches it through the pane
+  # TITLE: for a real program, publish its basename as the title here (OSC 2,
+  # to $HERDR_TITLES_TTY — a test seam — or /dev/tty). Builtins and functions
+  # (cd, z, aliases) publish nothing, so the prompt's cwd title stands and the
+  # tab never flashes the shell name; a program that sets its own title
+  # (nvim) simply overrides this a moment later. Harmless when terminal
+  # titles are off. HERDR_TITLES_NO_TITLE=1 disables it like the prompt title.
   _hwt_preexec() {
-    local line="${2:-$1}" kind
-    kind=$(builtin whence -w -- "${(Q)${(z)line}[1]}" 2>/dev/null)
+    local line="${2:-$1}" kind word
+    # Split into an explicit array: a single-word line makes ${(z)line}
+    # collapse to a scalar, and [1] would then take its first CHARACTER.
+    local -a words; words=("${(z)line}")
+    word="${(Q)words[1]}"
+    kind=$(builtin whence -w -- "$word" 2>/dev/null)
     case "${kind##*: }" in
-      command|hashed) ("$_hwt_bin" preexec "$line"       >/dev/null 2>&1 &) ;;
+      command|hashed)
+        [[ -z ${HERDR_TITLES_NO_TITLE:-} ]] && print -n "\e]2;${word:t}\a" > "${HERDR_TITLES_TTY:-/dev/tty}" 2>/dev/null
+        ("$_hwt_bin" preexec "$line"       >/dev/null 2>&1 &) ;;
       *)              ("$_hwt_bin" preexec "$line" shell >/dev/null 2>&1 &) ;;
     esac
   }
@@ -55,8 +70,13 @@ if [[ -n ${HERDR_PANE_ID:-} && -x $_hwt_bin ]]; then
   # defaults to the cwd basename), or set HERDR_TITLES_NO_TITLE=1 to keep
   # your shell's own title handling. Harmless when terminal_titles is off.
   if [[ -z ${HERDR_TITLES_NO_TITLE:-} ]]; then
-    (( ${+functions[_herdr_titles_title]} )) || _herdr_titles_title() { print -r -- "${PWD:t}"; }
-    _herdr_titles_precmd() { print -n "\e]2;$(_herdr_titles_title)\a" > /dev/tty 2>/dev/null; }
+    # HWT_SHELL_ICON is the shell's icon glyph (plus a space) when `init`
+    # emitted this with icons enabled, "" otherwise — so a plain-shell tab
+    # named after its cwd looks like every other tab. A user-defined
+    # _herdr_titles_title replaces the whole string, glyph included.
+    _hwt_shell_icon="" # HWT_SHELL_ICON
+    (( ${+functions[_herdr_titles_title]} )) || _herdr_titles_title() { print -r -- "${_hwt_shell_icon}${PWD:t}"; }
+    _herdr_titles_precmd() { print -n "\e]2;$(_herdr_titles_title)\a" > "${HERDR_TITLES_TTY:-/dev/tty}" 2>/dev/null; }
     add-zsh-hook precmd _herdr_titles_precmd
   fi
 fi

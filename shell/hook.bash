@@ -29,10 +29,19 @@ if [[ -n ${HERDR_PANE_ID:-} && -x $_hwt_bin && -z ${_hwt_installed:-} ]]; then
   # The first word only names a program when `type -t` says it is a file on
   # disk; anything else gets a "shell" marker telling the engine to sample the
   # pane's real foreground process instead.
+  #
+  # Under `tabs { terminal_titles = true }` the daemon is the single writer
+  # for the tab, and the program a command starts reaches it through the pane
+  # TITLE: for a real program, publish its basename as the title here (OSC 2,
+  # to $HERDR_TITLES_TTY — a test seam — or /dev/tty). Builtins and functions
+  # publish nothing, so the prompt's cwd title stands and the tab never
+  # flashes the shell name; a program that sets its own title (nvim) simply
+  # overrides this a moment later. HERDR_TITLES_NO_TITLE=1 disables it.
   _hwt_preexec() {
     local word="${1%% *}" kind
     kind=$(type -t -- "$word" 2>/dev/null)
     if [ "$kind" = "file" ]; then
+      [[ -z ${HERDR_TITLES_NO_TITLE:-} ]] && printf '\e]2;%s\a' "${word##*/}" > "${HERDR_TITLES_TTY:-/dev/tty}" 2>/dev/null
       ("$_hwt_bin" preexec "$1"       >/dev/null 2>&1 &)
     else
       ("$_hwt_bin" preexec "$1" shell >/dev/null 2>&1 &)
@@ -49,8 +58,12 @@ if [[ -n ${HERDR_PANE_ID:-} && -x $_hwt_bin && -z ${_hwt_installed:-} ]]; then
   # _herdr_titles_title yourself BEFORE this hook to choose the text (it
   # defaults to the cwd basename), or set HERDR_TITLES_NO_TITLE=1 to keep
   # your shell's own title handling. Harmless when terminal_titles is off.
-  declare -F _herdr_titles_title >/dev/null 2>&1 || _herdr_titles_title() { printf '%s' "${PWD##*/}"; }
-  _herdr_titles_precmd() { printf '\e]2;%s\a' "$(_herdr_titles_title)" > /dev/tty 2>/dev/null; }
+  # HWT_SHELL_ICON is the shell's icon glyph (plus a space) when `init`
+  # emitted this with icons enabled, "" otherwise. A user-defined
+  # _herdr_titles_title replaces the whole string, glyph included.
+  _hwt_shell_icon="" # HWT_SHELL_ICON
+  declare -F _herdr_titles_title >/dev/null 2>&1 || _herdr_titles_title() { printf '%s' "${_hwt_shell_icon}${PWD##*/}"; }
+  _herdr_titles_precmd() { printf '\e]2;%s\a' "$(_herdr_titles_title)" > "${HERDR_TITLES_TTY:-/dev/tty}" 2>/dev/null; }
 
   if declare -p preexec_functions >/dev/null 2>&1 || declare -p precmd_functions >/dev/null 2>&1; then
     # A preexec framework (bash-preexec / ble.sh / atuin) owns the trap; just
