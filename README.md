@@ -146,7 +146,10 @@ trap; see the comments in `shell/hook.bash`.
 With `tabs { terminal_titles = true }`, the hooks will only perform renames
 if `watch_titles` is disabled, otherwise you don't really need them since
 they will only revive a dead daemon as needed, but that happens via other
-means anyway.
+means anyway. Without the daemon, each prompt's hook follows the pane's title
+for about two seconds and then exits, so a long-running command that keeps
+updating its title (a build reporting progress) is only reflected up to that
+point until the next prompt — enable `watch_titles` for continuous following.
 
 ## The watch daemon
 

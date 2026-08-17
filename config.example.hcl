@@ -118,7 +118,8 @@ tabs {
   # max_name_len above apply to the title, but no icons are added. Agent panes
   # follow agent_titles if enabled, otherwise an agent's session title counts
   # as an ordinary terminal title. You won't need to install the shell hooks
-  # if you also enable watch_titles.
+  # if you also enable watch_titles. The running watch daemon reads this at
+  # startup: after changing it, restart the daemon (or the session).
   terminal_titles = false
 
   # Run the per-session watch daemon. It follows agent title changes (e.g.
