@@ -238,16 +238,22 @@ func runFast(mode string, args []string) error {
 		return nil
 	}
 
-	// When using terminal titles, a process-derived rename would only fight
-	// the title the shell is about to set: the daemon's pane.updated stream
-	// owns titled panes, so the hook just revives it when dead. But the
-	// daemon only reacts to events, and herdr has no "foreground command
-	// changed" event, so a program that sets NO title (helix, less, most CLI
-	// tools) is invisible to it: on an untitled pane the hook is the only
-	// thing that can name the tab, and it falls through to the normal
-	// process-derived rename below. With the daemon disabled by
-	// watch_titles=false, the hook keeps just the focused tab up to date, and
-	// leaves the rest to the watchdog events' full passes.
+	// When using terminal titles, the daemon's pane.updated stream owns
+	// titles, and the hook just revives it when dead. But the daemon only
+	// reacts to events, and herdr has no "foreground command changed" event,
+	// so a program that sets NO title (helix, less, most CLI tools) is
+	// invisible to it: the hook is the only thing that can name that tab.
+	//
+	// At preexec the pane's title, if any, is the SHELL's — published for the
+	// prompt that just ended and stale for the command now starting — so
+	// preexec always falls through to the process-derived rename below; if
+	// the program then sets its own title, the daemon applies it on top
+	// (a title still wins once one arrives). At precmd the shell is about to
+	// republish its title and the daemon will apply it, so a rename to the
+	// shell name would only flap: precmd yields on a titled pane and renames
+	// only an untitled one. With the daemon disabled by watch_titles=false,
+	// the hook keeps just the focused tab up to date, and leaves the rest to
+	// the watchdog events' full passes.
 	if tabs.TerminalTitles {
 		stateDir := pluginStateDir()
 		if err := os.MkdirAll(stateDir, 0o755); err != nil {
@@ -256,10 +262,10 @@ func runFast(mode string, args []string) error {
 		session := envOr("HERDR_SESSION", "default")
 		if tabs.WatchTitles {
 			ensureDaemon(stateDir, session)
-			if paneHasTitle(sessionSocketPath(), os.Getenv("HERDR_PANE_ID")) {
-				return nil // the daemon owns titled panes
+			if mode == "precmd" && paneHasTitle(sessionSocketPath(), os.Getenv("HERDR_PANE_ID")) {
+				return nil // the shell's title is coming; the daemon owns it
 			}
-			// Untitled pane: fall through to the process-derived rename.
+			// Fall through to the process-derived rename.
 		} else {
 			// Subscribe before reading to ensure we don't miss any events. Events
 			// that overlap the read are no-ops if they're the same as the current

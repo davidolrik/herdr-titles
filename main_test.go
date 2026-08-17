@@ -647,14 +647,27 @@ func TestFastPath(t *testing.T) {
 	}
 	before = len(renames)
 
-	// A pane that DOES carry a terminal title belongs to the daemon's
-	// pane.updated stream: a process-derived rename would only fight the
-	// title, so the hook yields.
+	// A titled pane, command starting (preexec): the title is the SHELL's,
+	// set for the prompt that just ended — it is stale for the command now
+	// starting, and if that command sets no title (helix) nothing else ever
+	// names the tab. So preexec renames by program regardless of the title;
+	// if the program then sets its own title, the daemon's pane.updated
+	// applies it on top (title still wins once one arrives).
 	api.setPaneTitle("w1:p1", "w1:t1", "", "user@host: ~/proj")
-	run("preexec", "nvim x")
+	run("preexec", "lazygit")
+	_, renames, _ = api.recorded()
+	if len(renames) != before+1 || renames[before] != "w1:t1=lazygit" {
+		t.Fatalf("terminal_titles=true, titled pane at preexec: renames = %v, want trailing w1:t1=lazygit", renames)
+	}
+	before = len(renames)
+
+	// A titled pane, back at the prompt (precmd): the shell is about to
+	// republish its title and the daemon will apply it, so a process-derived
+	// rename to the shell name would only flap. precmd yields.
+	run("precmd", "zsh")
 	_, renames, _ = api.recorded()
 	if len(renames) != before {
-		t.Fatalf("terminal_titles=true, titled pane: hook renamed instead of yielding: %v", renames)
+		t.Fatalf("terminal_titles=true, titled pane at precmd: hook renamed instead of yielding: %v", renames)
 	}
 
 	// terminal titles without the daemon (watch_titles=false): the hook is
