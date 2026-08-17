@@ -56,7 +56,7 @@ command = ["./bin/herdr-titles", "refresh-all"]
 #   herdr plugin action invoke davidolrik.titles.reset
 [[actions]]
 id = "reset"
-title = "Tab naming: reset tab to automatic naming"
+title = "Tab naming: reset tab to automatic naming (rejects a stale terminal title)"
 contexts = ["global"]
 command = ["./bin/herdr-titles", "reset"]
 

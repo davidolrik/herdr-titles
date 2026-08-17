@@ -157,7 +157,7 @@ func renameTab(sockPath, tabID, label string) {
 // computeTabName determines the label a tab should carry, or ok=false when no
 // name is computable (no active pane, process-info blip) — in which case the
 // tab must be left alone, never fall through to a shell name.
-func computeTabName(sockPath string, tab Tab, snap *Snapshot, cfg *TabsConfig) (string, bool) {
+func computeTabName(sockPath string, tab Tab, snap *Snapshot, cfg *TabsConfig, dismissedTitle string) (string, bool) {
 	paneID := activePane(tab, snap)
 	if paneID == "" {
 		return "", false
@@ -180,6 +180,10 @@ func computeTabName(sockPath string, tab Tab, snap *Snapshot, cfg *TabsConfig) (
 			}
 		}
 	}
+	// A title the user dismissed with reset counts as no title at all.
+	if dismissedTitle != "" && title == dismissedTitle {
+		title = ""
+	}
 	if name, ok := titleTabName(agentKind, title, cfg); ok {
 		return name, true
 	}
@@ -195,6 +199,25 @@ func computeTabName(sockPath string, tab Tab, snap *Snapshot, cfg *TabsConfig) (
 		return "", false
 	}
 	return FormatTabName(prog, cmdline, cfg), true
+}
+
+// paneTitle returns the title a pane carries in the snapshot: the agent's
+// reported title if it hosts one, else its terminal title, "" if neither.
+func paneTitle(paneID string, snap *Snapshot) string {
+	if paneID == "" {
+		return ""
+	}
+	for _, a := range snap.Agents {
+		if a.PaneID == paneID && a.Title != "" {
+			return a.Title
+		}
+	}
+	for _, p := range snap.Panes {
+		if p.PaneID == paneID {
+			return p.Title
+		}
+	}
+	return ""
 }
 
 // RenameTabForTitle applies a pane's terminal title to its tab — the daemon's
@@ -229,6 +252,16 @@ func RenameTabForTitle(sockPath, statePath, tabID, paneID, agentKind, title stri
 		// focused pane becomes known.
 		return false, nil
 	}
+	states := LoadTabStates(statePath)
+	dismissed := states[tabID].DismissedTitle
+	if dismissed != "" {
+		if title == dismissed {
+			// The user rejected this exact title with reset: act as a clear.
+			title = ""
+		} else {
+			dismissed = "" // a different title is fresh information
+		}
+	}
 	name, titled := titleTabName(agentKind, title, cfg)
 	if !titled {
 		// Title was explicitly cleared, fall back to the pane's foreground
@@ -245,7 +278,6 @@ func RenameTabForTitle(sockPath, statePath, tabID, paneID, agentKind, title stri
 			return false, nil
 		}
 	}
-	states := LoadTabStates(statePath)
 	if os.Getenv("HWT_DEBUG") != "" {
 		fmt.Fprintf(os.Stderr, "DEBUG rename tab=%s computed=%q label=%q state=%+v\n", tabID, name, label, states[tabID])
 	}
@@ -255,7 +287,7 @@ func RenameTabForTitle(sockPath, statePath, tabID, paneID, agentKind, title stri
 	if name != label {
 		renameTab(sockPath, tabID, name)
 	}
-	states[tabID] = TabState{Auto: name, Enabled: true}
+	states[tabID] = TabState{Auto: name, Enabled: true, DismissedTitle: dismissed}
 	return false, SaveTabStates(statePath, states)
 }
 
@@ -276,7 +308,24 @@ func ReconcileTabs(sockPath string, snap *Snapshot, cfg *TabsConfig, states TabS
 			continue
 		}
 
-		name, ok := computeTabName(sockPath, tab, snap, cfg)
+		// A reset rejects whatever title the pane carries right now: it is
+		// remembered so the tab is named by its program until the pane emits
+		// a different title. An existing dismissal stays only while the pane
+		// still shows that exact title.
+		dismissed := states[tab.TabID].DismissedTitle
+		current := paneTitle(activePane(tab, snap), snap)
+		switch {
+		case force, isClearGesture(tab.Label):
+			// The reset action, or the whitespace rename the README teaches
+			// (herdr's rename UI accepts spaces but not an empty name), both
+			// reject the current title. Herdr's own reversion to the bare tab
+			// number is not a user gesture and keeps the title.
+			dismissed = current
+		case dismissed != "" && current != dismissed:
+			dismissed = ""
+		}
+
+		name, ok := computeTabName(sockPath, tab, snap, cfg, dismissed)
 		if !ok {
 			continue
 		}
@@ -294,7 +343,7 @@ func ReconcileTabs(sockPath string, snap *Snapshot, cfg *TabsConfig, states TabS
 			}
 		}
 		// Ownership is recorded even when no rename was needed.
-		states[tab.TabID] = TabState{Auto: name, Enabled: true}
+		states[tab.TabID] = TabState{Auto: name, Enabled: true, DismissedTitle: dismissed}
 	}
 	states.Prune(seen)
 }

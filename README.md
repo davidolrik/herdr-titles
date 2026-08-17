@@ -108,6 +108,14 @@ again. To hand it back to automatic naming, rename it to just a **space**
 (herdr's rename UI rejects an empty name, but whitespace and bare numbers
 both count as "cleared"), or run the `reset` action from that tab.
 
+With `terminal_titles` on, handing a tab back — the whitespace rename or the
+`reset` action — also **rejects the pane's current terminal title**: titles
+are terminal state that outlives the program that set them (and the plugin
+has no way to clear one), so a stale title would otherwise just be re-adopted.
+The tab is then named by its program until the pane emits a *different* title,
+which takes over as usual. Herdr's own reversion of a dropped custom name to
+the bare tab number is not a user gesture: it re-adopts but keeps the title.
+
 ## Shell hook: real-time tab names
 
 Herdr has no "foreground command changed" event, so sourcing the bundled

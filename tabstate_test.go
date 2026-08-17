@@ -189,3 +189,25 @@ tabs {
 		t.Fatal("expected error for invalid substitution regex")
 	}
 }
+
+// The whitespace rename is the documented "hand it back" gesture, and it
+// must work on a tab the plugin currently OWNS — not only on one already
+// opted out. Treating it as a manual rename would opt the tab out first and
+// re-adopt it a pass later, an accidental two-step that (with terminal
+// titles) re-adopts straight back into whatever stale title the pane holds.
+func TestEligibleOwnedTabWhitespaceReadopts(t *testing.T) {
+	st := TabStates{"w1:t1": {Auto: "PROBE", Enabled: true}}
+	if !st.Eligible("w1:t1", " ", "zsh", false) {
+		t.Fatalf("whitespace rename on an owned tab was treated as opt-out: %+v", st["w1:t1"])
+	}
+	if !st["w1:t1"].Enabled {
+		t.Errorf("owned tab opted out by a whitespace rename: %+v", st["w1:t1"])
+	}
+	// A real hand-rename on an owned tab still opts out.
+	if st.Eligible("w1:t1", "my name", "zsh", false) {
+		t.Fatal("hand-rename on an owned tab stayed eligible")
+	}
+	if st["w1:t1"].Enabled {
+		t.Errorf("hand-rename did not opt out: %+v", st["w1:t1"])
+	}
+}

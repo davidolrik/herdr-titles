@@ -392,6 +392,118 @@ func TestRenameTabForTitleClearHideShell(t *testing.T) {
 	}
 }
 
+// A reset on a titled pane dismisses the pane's CURRENT terminal title: the
+// plugin cannot clear a title (it is terminal state herdr exposes no API
+// for), so "name this properly" is honored by remembering the rejected title
+// and naming the tab by its program until the pane emits a different one.
+// The dismissal is scoped to that exact title — any new title re-adopts.
+func TestReconcileTabsResetDismissesStaleTitle(t *testing.T) {
+	f := newTabsFixture(t)
+	f.cfg.TerminalTitles = true
+	f.api.setProcessInfo("w1:p1", "zsh", "zsh")
+	snap := singlePaneSnap("PROBE")
+	snap.Panes[0].Title = "PROBE"
+	f.states["w1:t1"] = TabState{Auto: "PROBE", Enabled: true}
+
+	// Reset (force) on the tab whose pane still carries the stale title.
+	ReconcileTabs(f.api.sockPath, snap, f.cfg, f.states, "w1:t1")
+	if got := f.renames(t); len(got) != 1 || got[0] != "w1:t1=zsh" {
+		t.Fatalf("reset renames = %v, want [w1:t1=zsh] (stale title dismissed)", got)
+	}
+	if st := f.states["w1:t1"]; st.DismissedTitle != "PROBE" || !st.Enabled {
+		t.Fatalf("state after reset = %+v, want dismissed PROBE and enabled", st)
+	}
+
+	// A plain pass with the SAME stale title must not resurrect it.
+	snap.Tabs[0].Label = "zsh"
+	ReconcileTabs(f.api.sockPath, snap, f.cfg, f.states, "")
+	if got := f.renames(t); len(got) != 1 {
+		t.Fatalf("stale title resurrected on a plain pass: %v", got)
+	}
+
+	// A DIFFERENT title is fresh information: it names the tab and clears
+	// the dismissal.
+	snap.Panes[0].Title = "make -j all"
+	ReconcileTabs(f.api.sockPath, snap, f.cfg, f.states, "")
+	if got := f.renames(t); len(got) != 2 || got[1] != "w1:t1=make -j all" {
+		t.Fatalf("new title after reset renames = %v, want trailing w1:t1=make -j all", got)
+	}
+	if st := f.states["w1:t1"]; st.DismissedTitle != "" {
+		t.Errorf("dismissal not cleared by a new title: %+v", st)
+	}
+}
+
+// Renaming a tab to whitespace is the clear gesture the README teaches (the
+// only one herdr's rename UI accepts), so it rejects a stale title exactly
+// like the reset action. Herdr's OWN reversion to the bare tab number is not
+// a user gesture and must not dismiss anything.
+func TestReconcileTabsWhitespaceRenameDismissesTitleButNumberDoesNot(t *testing.T) {
+	f := newTabsFixture(t)
+	f.cfg.TerminalTitles = true
+	f.api.setProcessInfo("w1:p1", "zsh", "zsh")
+
+	// The tab was auto-named PROBE from its pane title; user renames to " ".
+	snap := singlePaneSnap(" ")
+	snap.Panes[0].Title = "PROBE"
+	f.states["w1:t1"] = TabState{Auto: "PROBE", Enabled: true}
+	ReconcileTabs(f.api.sockPath, snap, f.cfg, f.states, "")
+	if got := f.renames(t); len(got) != 1 || got[0] != "w1:t1=zsh" {
+		t.Fatalf("whitespace rename renames = %v, want [w1:t1=zsh]", got)
+	}
+	if st := f.states["w1:t1"]; st.DismissedTitle != "PROBE" {
+		t.Fatalf("whitespace rename did not dismiss the stale title: %+v", st)
+	}
+
+	// Herdr reverts a dropped custom name to the bare number: re-adopt, but
+	// the title is still trusted.
+	g := newTabsFixture(t)
+	g.cfg.TerminalTitles = true
+	g.api.setProcessInfo("w1:p1", "zsh", "zsh")
+	snap2 := singlePaneSnap("1")
+	snap2.Panes[0].Title = "PROBE"
+	g.states["w1:t1"] = TabState{Enabled: false}
+	ReconcileTabs(g.api.sockPath, snap2, g.cfg, g.states, "")
+	if got := g.renames(t); len(got) != 1 || got[0] != "w1:t1=PROBE" {
+		t.Fatalf("bare-number reversion renames = %v, want [w1:t1=PROBE] (title kept)", got)
+	}
+	if st := g.states["w1:t1"]; st.DismissedTitle != "" {
+		t.Errorf("bare-number reversion dismissed a title: %+v", st)
+	}
+}
+
+// The daemon's targeted event path must honor a dismissal too, or the next
+// pane.updated for the same title would undo the reset.
+func TestRenameTabForTitleHonorsDismissal(t *testing.T) {
+	api := newFakeAPI(t)
+	statePath := filepath.Join(t.TempDir(), "tabstate.test.json")
+	cfg := DefaultTabsConfig()
+	cfg.ShellName = "zsh"
+	cfg.TerminalTitles = true
+	api.setTab("w1:t1", "zsh")
+	api.setProcessInfo("w1:p1", "zsh", "zsh")
+	if err := SaveTabStates(statePath, TabStates{"w1:t1": {Auto: "zsh", Enabled: true, DismissedTitle: "PROBE"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The dismissed title arrives again: no rename.
+	if _, err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "w1:p1", "", "PROBE", true, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, renames, _ := api.recorded(); len(renames) != 0 {
+		t.Fatalf("dismissed title applied by the event path: %v", renames)
+	}
+	// A different title wins and clears the dismissal.
+	if _, err := RenameTabForTitle(api.sockPath, statePath, "w1:t1", "w1:p1", "", "fresh", true, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, renames, _ := api.recorded(); len(renames) != 1 || renames[0] != "w1:t1=fresh" {
+		t.Fatalf("renames = %v, want [w1:t1=fresh]", renames)
+	}
+	if st := LoadTabStates(statePath)["w1:t1"]; st.DismissedTitle != "" {
+		t.Errorf("dismissal not cleared: %+v", st)
+	}
+}
+
 func TestReconcileTabsBackgroundMultiPaneUntouched(t *testing.T) {
 	f := newTabsFixture(t)
 	snap := &Snapshot{

@@ -20,10 +20,25 @@ type TabState struct {
 	Auto string `json:"auto"`
 	// Enabled is false when a manual rename opted the tab out.
 	Enabled bool `json:"enabled"`
+	// DismissedTitle is a pane terminal title the user rejected with the
+	// reset action. The plugin cannot clear a title (it is terminal state
+	// with no herdr API), so it remembers the rejected one and names the tab
+	// by its program until the pane emits a different title, which clears
+	// this. Omitted from JSON when empty.
+	DismissedTitle string `json:"dismissed_title,omitempty"`
 }
 
 // TabStates maps tab_id to its naming state.
 type TabStates map[string]TabState
+
+// isClearGesture reports whether a label is the user's own "clear this"
+// rename: whitespace only. Herdr's rename UI rejects an empty submission but
+// accepts spaces, so this is the one clear a user can actually type, and —
+// unlike the bare tab number herdr reverts to by itself — it is unambiguously
+// a user gesture.
+func isClearGesture(label string) bool {
+	return label != "" && strings.TrimSpace(label) == ""
+}
 
 // isPlaceholder reports whether a label counts as "no name": empty, herdr's
 // own all-digit tab number, or whitespace only — herdr's rename UI rejects an
@@ -67,6 +82,12 @@ func (s TabStates) Eligible(tabID, label, computed string, force bool) bool {
 		return isPlaceholder(label)
 	default: // we own it
 		if label == st.Auto || label == "" {
+			return true
+		}
+		if isClearGesture(label) {
+			// The whitespace rename is the documented "hand it back" gesture;
+			// on an owned tab that just means "name it again now", not a
+			// manual rename to opt out of.
 			return true
 		}
 		if st.Auto == "" && isPlaceholder(label) {
