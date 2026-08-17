@@ -735,8 +735,13 @@ func TestWatchDaemonEscalatesSaturationDrops(t *testing.T) {
 	rec := &opsRecorder{}
 	ops := rec.ops()
 	gate := make(chan struct{})
+	entered := make(chan struct{}, 1)
 	innerRename := ops.rename
 	ops.rename = func(p paneEvent) bool {
+		select {
+		case entered <- struct{}{}: // tell the test the scheduler is stalled here
+		default:
+		}
 		<-gate // closed later: the first call stalls the scheduler
 		return innerRename(p)
 	}
@@ -751,8 +756,16 @@ func TestWatchDaemonEscalatesSaturationDrops(t *testing.T) {
 		return fmt.Sprintf(`{"event":"pane_updated","data":{"type":"pane_updated","pane":{"pane_id":%q,"tab_id":"w1:t1","agent":"","terminal_title_stripped":"t-%s"}}}`, pane, pane)
 	}
 	srv.events <- ev("w1:p0")
-	time.Sleep(60 * time.Millisecond) // > debounce: the scheduler is stuck in the gated rename
-	for i := 1; i <= 90; i++ {        // > channel capacity: the tail drops
+	// Wait until the scheduler is actually stuck in the gated rename before
+	// flooding: daemon startup (seed retries, debounce) delays the read loop
+	// unpredictably, and a flood classified before fire() runs merely
+	// coalesces in the scheduler's rename map instead of saturating.
+	select {
+	case <-entered:
+	case <-time.After(3 * time.Second):
+		t.Fatal("scheduler never entered the gated rename")
+	}
+	for i := 1; i <= 90; i++ { // > channel capacity: the tail drops
 		srv.events <- ev(fmt.Sprintf("w1:p%d", i))
 	}
 	// The kernel socket buffer absorbs the flood instantly; give the read
