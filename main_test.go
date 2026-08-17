@@ -491,10 +491,14 @@ func TestFastPath(t *testing.T) {
 		t.Fatalf("disabled tabs still renamed: %v", renames)
 	}
 
-	// terminal titles with the daemon (watch_titles defaults true): the hook
-	// must not rename, but it must still probe for a dead daemon. daemonAlive's
-	// O_CREATE open leaves the lock file behind, so its reappearance proves the
-	// probe ran.
+	// terminal titles with the daemon (watch_titles defaults true). The
+	// daemon only reacts to events, and herdr has no "foreground command
+	// changed" event, so a program that sets NO title (helix, less, most CLI
+	// tools) is invisible to it: the hook is the only thing that can name
+	// the tab. So on a pane with no terminal title the hook still renames by
+	// program. It must also still probe for a dead daemon; daemonAlive's
+	// O_CREATE open leaves the lock file behind, so its reappearance proves
+	// the probe ran.
 	if err := os.WriteFile(filepath.Join(configDir, "config.hcl"),
 		[]byte("template = \"x\"\ntabs { terminal_titles = true }\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -503,13 +507,25 @@ func TestFastPath(t *testing.T) {
 	if err := os.Remove(lockPath); err != nil {
 		t.Fatalf("lock file missing before terminal-titles run: %v", err)
 	}
-	run("preexec", "nvim x")
+	api.setPaneTitle("w1:p1", "w1:t1", "", "") // no terminal title (helix)
+	run("preexec", "hx x")
 	_, renames, _ = api.recorded()
-	if len(renames) != before {
-		t.Fatalf("terminal_titles=true still renamed from the hook: %v", renames)
+	if len(renames) != before+1 || renames[before] != "w1:t1=hx" {
+		t.Fatalf("terminal_titles=true, untitled pane: renames = %v, want trailing w1:t1=hx", renames)
 	}
 	if _, err := os.Stat(lockPath); err != nil {
 		t.Errorf("terminal-titles fast path skipped the daemon probe: %v", err)
+	}
+	before = len(renames)
+
+	// A pane that DOES carry a terminal title belongs to the daemon's
+	// pane.updated stream: a process-derived rename would only fight the
+	// title, so the hook yields.
+	api.setPaneTitle("w1:p1", "w1:t1", "", "user@host: ~/proj")
+	run("preexec", "nvim x")
+	_, renames, _ = api.recorded()
+	if len(renames) != before {
+		t.Fatalf("terminal_titles=true, titled pane: hook renamed instead of yielding: %v", renames)
 	}
 
 	// terminal titles without the daemon (watch_titles=false): the hook is

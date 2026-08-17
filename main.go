@@ -206,6 +206,20 @@ func lingerPaneTitles(conn net.Conn, reader *bufio.Reader, paneID string, quiet,
 	return apply()
 }
 
+// paneHasTitle reports whether a pane currently carries a terminal title. A
+// pane.get blip counts as titled: when in doubt the hook must yield rather
+// than risk a process-derived rename over a title the daemon owns.
+func paneHasTitle(sockPath, paneID string) bool {
+	if paneID == "" {
+		return true
+	}
+	p, ok := paneInfo(sockPath, paneID)
+	if !ok {
+		return true
+	}
+	return p.Title != ""
+}
+
 // runFast is the shell-hook path: rename just the invoking tab, right now.
 // mode "preexec" carries the typed command line (plus a "shell" marker when
 // the word is a construct and the pane's real process must be sampled); mode
@@ -226,9 +240,14 @@ func runFast(mode string, args []string) error {
 
 	// When using terminal titles, a process-derived rename would only fight
 	// the title the shell is about to set: the daemon's pane.updated stream
-	// owns these panes, so the hook just revives it when dead. With the
-	// daemon disabled by watch_titles=false, the hook keeps just the focused
-	// tab up to date, and leaves the rest to the watchdog events' full passes.
+	// owns titled panes, so the hook just revives it when dead. But the
+	// daemon only reacts to events, and herdr has no "foreground command
+	// changed" event, so a program that sets NO title (helix, less, most CLI
+	// tools) is invisible to it: on an untitled pane the hook is the only
+	// thing that can name the tab, and it falls through to the normal
+	// process-derived rename below. With the daemon disabled by
+	// watch_titles=false, the hook keeps just the focused tab up to date, and
+	// leaves the rest to the watchdog events' full passes.
 	if tabs.TerminalTitles {
 		stateDir := pluginStateDir()
 		if err := os.MkdirAll(stateDir, 0o755); err != nil {
@@ -237,70 +256,74 @@ func runFast(mode string, args []string) error {
 		session := envOr("HERDR_SESSION", "default")
 		if tabs.WatchTitles {
 			ensureDaemon(stateDir, session)
-			return nil
-		}
-		// Subscribe before reading to ensure we don't miss any events. Events
-		// that overlap the read are no-ops if they're the same as the current
-		// label, and every lingering hook sees the same server-ordered stream,
-		// so racing hooks converge on the newest title.
-		sock := sessionSocketPath()
-		paneID := os.Getenv("HERDR_PANE_ID")
-		statePath := tabStatePath(stateDir, session)
-		// apply reads pane info and renames under the lock, so racing hooks
-		// always act on fresh state, and follows the fast path's rerun contract:
-		// a contender hands its work to the holder, so a rerun must be a superset
-		// of whatever the contender wanted — another hook's fresher title or a
-		// watchdog's full reconcile.
-		apply := func() error {
-			first := true
-			return withLock(stateDir, session, func() error {
-				if !first {
-					return pass("rerun", true, false)
-				}
-				first = false
-				p, ok := paneInfo(sock, paneID)
-				if !ok {
-					// Don't need to escalate here, the next hook event retries.
+			if paneHasTitle(sessionSocketPath(), os.Getenv("HERDR_PANE_ID")) {
+				return nil // the daemon owns titled panes
+			}
+			// Untitled pane: fall through to the process-derived rename.
+		} else {
+			// Subscribe before reading to ensure we don't miss any events. Events
+			// that overlap the read are no-ops if they're the same as the current
+			// label, and every lingering hook sees the same server-ordered stream,
+			// so racing hooks converge on the newest title.
+			sock := sessionSocketPath()
+			paneID := os.Getenv("HERDR_PANE_ID")
+			statePath := tabStatePath(stateDir, session)
+			// apply reads pane info and renames under the lock, so racing hooks
+			// always act on fresh state, and follows the fast path's rerun contract:
+			// a contender hands its work to the holder, so a rerun must be a superset
+			// of whatever the contender wanted — another hook's fresher title or a
+			// watchdog's full reconcile.
+			apply := func() error {
+				first := true
+				return withLock(stateDir, session, func() error {
+					if !first {
+						return pass("rerun", true, false)
+					}
+					first = false
+					p, ok := paneInfo(sock, paneID)
+					if !ok {
+						// Don't need to escalate here, the next hook event retries.
+						return nil
+					}
+					if p.TabID != tabID {
+						// The pane moved out of this tab mid-linger, its title no
+						// longer names this tab, and its new tab is not ours to touch.
+						return nil
+					}
+					retryFull, err := RenameTabForTitle(sock, statePath,
+						tabID, paneID, p.Agent, p.Title, p.Focused, tabs)
+					if err != nil {
+						return err
+					}
+					if retryFull {
+						// A transient tab.get/process-info blip prevented a rename
+						// that was due; the linger exits quiet and nothing resends
+						// this title, so escalate to a full pass like the daemon does.
+						return pass("rerun", true, false)
+					}
 					return nil
-				}
-				if p.TabID != tabID {
-					// The pane moved out of this tab mid-linger, its title no
-					// longer names this tab, and its new tab is not ours to touch.
-					return nil
-				}
-				retryFull, err := RenameTabForTitle(sock, statePath,
-					tabID, paneID, p.Agent, p.Title, p.Focused, tabs)
-				if err != nil {
-					return err
-				}
-				if retryFull {
-					// A transient tab.get/process-info blip prevented a rename
-					// that was due; the linger exits quiet and nothing resends
-					// this title, so escalate to a full pass like the daemon does.
-					return pass("rerun", true, false)
-				}
+				})
+			}
+			if mode == "preexec" {
+				// Shells set the title at the prompt, so preexec sees the previous
+				// prompt's title: applying it is a no-op at best, and lingering here
+				// would only double the subscriber processes per command — precmd's
+				// linger covers the same window.
+				return apply()
+			}
+			conn, reader, subErr := subscribeEvents(sock, []string{"pane.updated"}, hookLingerMax)
+			if subErr == nil {
+				defer conn.Close()
+			}
+			if err := apply(); err != nil {
+				return err
+			}
+			if subErr != nil {
+				// Lingering is best-effort, so just exit if we can't subscribe.
 				return nil
-			})
+			}
+			return lingerPaneTitles(conn, reader, paneID, hookLingerQuiet, hookLingerMax, apply)
 		}
-		if mode == "preexec" {
-			// Shells set the title at the prompt, so preexec sees the previous
-			// prompt's title: applying it is a no-op at best, and lingering here
-			// would only double the subscriber processes per command — precmd's
-			// linger covers the same window.
-			return apply()
-		}
-		conn, reader, subErr := subscribeEvents(sock, []string{"pane.updated"}, hookLingerMax)
-		if subErr == nil {
-			defer conn.Close()
-		}
-		if err := apply(); err != nil {
-			return err
-		}
-		if subErr != nil {
-			// Lingering is best-effort, so just exit if we can't subscribe.
-			return nil
-		}
-		return lingerPaneTitles(conn, reader, paneID, hookLingerQuiet, hookLingerMax, apply)
 	}
 
 	var prog, cmdline string

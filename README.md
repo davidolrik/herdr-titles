@@ -151,10 +151,13 @@ prompt never blocks, and stay registered across re-sourcing. On bash they
 cooperate with bash-preexec/ble.sh/atuin instead of clobbering the DEBUG
 trap; see the comments in `shell/hook.bash`.
 
-With `tabs { terminal_titles = true }`, the hooks will only perform renames
-if `watch_titles` is disabled, otherwise you don't really need them since
-they will only revive a dead daemon as needed, but that happens via other
-means anyway. Without the daemon, each prompt's hook follows the pane's title
+With `tabs { terminal_titles = true }`, a pane that carries a terminal title
+belongs to the daemon (its `pane.updated` stream follows the title live), so
+the hooks yield there. But herdr has no "foreground command changed" event:
+a program that sets no title — helix, less, most CLI tools — is invisible to
+the daemon, so on an untitled pane the hooks still name the tab by program,
+exactly as without terminal titles. Keep them installed. Without the daemon
+(`watch_titles = false`), each prompt's hook follows the pane's title
 for about two seconds and then exits, so a long-running command that keeps
 updating its title (a build reporting progress) is only reflected up to that
 point until the next prompt — enable `watch_titles` for continuous following.
