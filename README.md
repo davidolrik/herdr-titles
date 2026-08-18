@@ -183,7 +183,10 @@ assignment) still follows its foreground program and is restored the moment
 it is back at the prompt, even in a background tab. Keep the integration
 installed. Because the daemon is what applies titles, `terminal_titles`
 requires `watch_titles` (the default); the plugin refuses a config that
-enables titles with the daemon off.
+enables titles with the daemon off. A `pane.updated` event is only a nudge:
+herdr hands the stream out at a bounded rate and replays buffered history to
+a fresh subscriber, so the daemon applies the pane's *current* title, never
+the (possibly stale) one in the event.
 
 ## The watch daemon
 

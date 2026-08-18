@@ -14,7 +14,7 @@ package main
 // event stream ends (server gone; the next server's startup respawns it).
 //
 // CPU discipline: high-frequency events take cheap paths (title-only pass,
-// or a targeted tab rename fed from the event payload — zero subprocesses),
+// or a targeted tab rename of the pane's current title — zero subprocesses),
 // full passes are debounced AND rate-floored, and env files are stat-polled
 // on a slow tick.
 
@@ -844,10 +844,7 @@ func runWatchDetached() error {
 			retryFull := false
 			_ = withLock(stateDir, session, func() error {
 				var err error
-				retryFull, err = RenameTabForTitle(
-					sockPath,
-					tabStatePath(stateDir, session),
-					p.TabID, p.PaneID, p.Agent, p.Title, p.FocusKnown, cfg.Tabs)
+				retryFull, err = renameFromEvent(sockPath, tabStatePath(stateDir, session), p, cfg.Tabs)
 				return err
 			})
 			return retryFull

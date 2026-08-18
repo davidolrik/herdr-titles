@@ -291,6 +291,24 @@ func RenameTabForTitle(sockPath, statePath, tabID, paneID, agentKind, title stri
 	return false, SaveTabStates(statePath, states)
 }
 
+// renameFromEvent is the daemon's rename op for a pane.updated event. The
+// event is a nudge, not the truth: herdr hands the stream out at a bounded
+// rate (one event per type per tick), and a fresh subscription first replays
+// buffered history — so the payload's title can be seconds behind, or minutes
+// after a daemon (re)start, and applying it as-is renamed tabs to titles that
+// were long gone. The pane's CURRENT title and agent are fetched and applied
+// instead; a stale event thus lands on the right name immediately rather than
+// after the queue drains. A pane that no longer exists, or that has moved to
+// another tab, is left to the full pass its own event schedules. Same
+// contract as RenameTabForTitle otherwise; the caller holds the lock.
+func renameFromEvent(sockPath, statePath string, p paneEvent, cfg *TabsConfig) (retryFull bool, err error) {
+	pane, ok := paneInfo(sockPath, p.PaneID)
+	if !ok || (pane.TabID != "" && pane.TabID != p.TabID) {
+		return false, nil
+	}
+	return RenameTabForTitle(sockPath, statePath, p.TabID, p.PaneID, pane.Agent, pane.Title, p.FocusKnown, cfg)
+}
+
 // ReconcileTabs walks every tab once, idempotently: compute the desired
 // label, check eligibility, rename only when the label actually changes, and
 // record ownership. Prunes state for tabs that no longer exist. forceTab

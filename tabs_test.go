@@ -860,3 +860,55 @@ func TestReconcileTabByIDLeavesUnknownAndHandNamedAlone(t *testing.T) {
 		t.Errorf("hand-named tab not opted out: %+v (seen=%v)", st, ok)
 	}
 }
+
+// The daemon's rename op treats a pane.updated payload as a nudge, not the
+// truth: herdr delivers the stream at a bounded rate and a fresh subscription
+// first replays buffered history, so the payload's title can be seconds — or,
+// right after a daemon restart, minutes — stale. The pane's CURRENT title is
+// what gets applied.
+func TestRenameFromEventAppliesCurrentTitleNotPayload(t *testing.T) {
+	api := newFakeAPI(t)
+	statePath := filepath.Join(t.TempDir(), "tabstate.test.json")
+	cfg := DefaultTabsConfig()
+	cfg.ShellName = "zsh"
+	cfg.TerminalTitles = true
+	api.setTab("w1:t1", "zsh")
+	if err := SaveTabStates(statePath, TabStates{"w1:t1": {Auto: "zsh", Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The event says "sleep" (long over); the pane now says "proj".
+	api.setPaneTitle("w1:p1", "w1:t1", "", "proj")
+	retry, err := renameFromEvent(api.sockPath, statePath,
+		paneEvent{PaneID: "w1:p1", TabID: "w1:t1", Title: "sleep", FocusKnown: true}, cfg)
+	if err != nil || retry {
+		t.Fatalf("renameFromEvent: retry=%v err=%v", retry, err)
+	}
+	_, renames, _ := api.recorded()
+	if len(renames) != 1 || renames[0] != "w1:t1=proj" {
+		t.Fatalf("renames = %v, want [w1:t1=proj]", renames)
+	}
+
+	// A stale agent-title event: the pane's current agent title wins too.
+	api.setPaneTitle("w1:p1", "w1:t1", "claude", "Fix the flaky test")
+	if _, err := renameFromEvent(api.sockPath, statePath,
+		paneEvent{PaneID: "w1:p1", TabID: "w1:t1", Agent: "claude", Title: "Old session name", FocusKnown: true}, cfg); err != nil {
+		t.Fatal(err)
+	}
+	_, renames, _ = api.recorded()
+	if len(renames) != 2 || renames[1] != "w1:t1=Fix the flaky test" {
+		t.Fatalf("renames = %v, want trailing agent title", renames)
+	}
+
+	// A pane that no longer exists: nothing to apply, no escalation — its
+	// close event schedules the full pass that prunes the tab.
+	retry, err = renameFromEvent(api.sockPath, statePath,
+		paneEvent{PaneID: "w1:p9", TabID: "w1:t9", Title: "gone", FocusKnown: true}, cfg)
+	if err != nil || retry {
+		t.Fatalf("closed pane: retry=%v err=%v", retry, err)
+	}
+	_, renames, _ = api.recorded()
+	if len(renames) != 2 {
+		t.Errorf("closed pane still renamed: %v", renames)
+	}
+}
