@@ -44,6 +44,9 @@ mysession : Work @ HQ › myproject › 1 › ×2 ✓1
   (so tools like [Overseer](https://overseer.olrik.dev/) Just Work), caches
   it briefly, and can watch files for changes
   (`env { watch_files = [...] }`) so context switches appear by themselves.
+  The probe is a non-interactive login shell: export what your template
+  needs from `~/.zshenv`/`~/.zprofile` (or your shell's equivalent), not
+  only from `~/.zshrc`.
 - **A self-healing per-session daemon** — subscribes to herdr's event stream
   (including events plugin hooks can't receive) and drives all updates with
   debounced, scoped passes: near-zero CPU even in busy sessions. If it dies,

@@ -11,8 +11,8 @@ import (
 	"time"
 )
 
-// shellTimeout bounds the env-harvesting shell spawn; an interactive zsh with a
-// heavy rc chain takes well under a second, so anything longer is a hang.
+// shellTimeout bounds the env-harvesting shell spawn; a login zsh with a
+// heavy profile chain takes well under a second, so anything longer is a hang.
 const shellTimeout = 15 * time.Second
 
 // ParseEnvNul parses NUL-separated KEY=VALUE entries as produced by `env -0`.
@@ -55,15 +55,16 @@ func cleanEnv() []string {
 }
 
 // harvestCommand builds the harvest shell's exec.Cmd: the scrubbed
-// environment, no stdin, and — load-bearing — its OWN SESSION. The command
-// is an interactive shell (`$SHELL -ilc`), and an interactive zsh that can
-// open its controlling terminal makes itself that terminal's foreground
-// process group. Spawned from a shell hook, whose controlling terminal is the
-// user's pane, it stole the tty from the user's foreground command, which was
-// then stopped with SIGTTOU on its next tcsetattr ("zsh: suspended (tty
-// output)  brew upgrade"). A new session has no controlling terminal, so
-// there is nothing to grab; the daemon and herdr's own hook spawns already
-// run that way.
+// environment, no stdin, and its OWN SESSION. The default command is a
+// non-interactive login shell, which never touches a terminal; but the
+// command is user-configurable, and an INTERACTIVE zsh that can open its
+// controlling terminal makes itself that terminal's foreground process group.
+// Spawned from a shell hook, whose controlling terminal is the user's pane,
+// that stole the tty from the user's foreground command, which was then
+// stopped with SIGTTOU on its next tcsetattr ("zsh: suspended (tty output)
+// brew upgrade"). A new session has no controlling terminal, so there is
+// nothing to grab whatever the command; the daemon and herdr's own hook
+// spawns already run that way.
 func harvestCommand(ctx context.Context, command []string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
 	cmd.Env = cleanEnv()
@@ -73,8 +74,8 @@ func harvestCommand(ctx context.Context, command []string) *exec.Cmd {
 
 // HarvestEnv returns the environment exported by running command (expected to
 // emit `env -0` style output). The raw output is cached at cachePath; a cache
-// younger than ttl is reused so bursts of herdr events don't each spawn an
-// interactive shell. bypassCache forces a fresh spawn and rewrites the cache.
+// younger than ttl is reused so bursts of herdr events don't each spawn a
+// shell. bypassCache forces a fresh spawn and rewrites the cache.
 func HarvestEnv(command []string, cachePath string, ttl time.Duration, bypassCache bool) (map[string]string, error) {
 	if !bypassCache {
 		if info, err := os.Stat(cachePath); err == nil && time.Since(info.ModTime()) < ttl {

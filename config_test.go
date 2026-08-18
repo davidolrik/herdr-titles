@@ -68,8 +68,14 @@ func TestLoadConfigMissingFileUsesDefaults(t *testing.T) {
 	if cfg.Template == nil {
 		t.Error("default Template expression is nil")
 	}
-	if len(cfg.EnvCommand) == 0 || cfg.EnvCommand[0] != "/bin/zsh" {
-		t.Errorf("default EnvCommand = %v, want to start with $SHELL (/bin/zsh)", cfg.EnvCommand)
+	// A LOGIN shell, so ~/.zshenv and ~/.zprofile (PATH, exported context)
+	// are read — but NOT interactive: an interactive shell would start prompt
+	// and plugin machinery (atuin, starship, ...) that has no business running
+	// for an env scrape, and an interactive zsh grabs the controlling
+	// terminal, which stops the user's foreground command with SIGTTOU when
+	// spawned from a shell hook.
+	if want := []string{"/bin/zsh", "-lc", "env -0"}; strings.Join(cfg.EnvCommand, " ") != strings.Join(want, " ") {
+		t.Errorf("default EnvCommand = %v, want %v ($SHELL, login, non-interactive)", cfg.EnvCommand, want)
 	}
 	if cfg.EnvTTL != 10*time.Second {
 		t.Errorf("default EnvTTL = %v, want 10s", cfg.EnvTTL)

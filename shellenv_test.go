@@ -121,13 +121,13 @@ func TestHarvestEnvCommandFailure(t *testing.T) {
 	}
 }
 
-// The harvest shell is interactive (`$SHELL -ilc`), and an interactive zsh
-// that can open its controlling terminal makes itself the terminal's
-// foreground process group. Spawned from a shell hook — whose controlling
-// terminal is the user's pane — that stole the tty from the user's own
-// foreground command, which then got SIGTTOU on its next tcsetattr ("zsh:
-// suspended (tty output)  brew upgrade"). The shell must run in its own
-// session, so it has no controlling terminal to grab.
+// The harvest command is user-configurable, and an INTERACTIVE zsh that can
+// open its controlling terminal makes itself the terminal's foreground
+// process group. Spawned from a shell hook — whose controlling terminal is
+// the user's pane — that stole the tty from the user's own foreground
+// command, which then got SIGTTOU on its next tcsetattr ("zsh: suspended
+// (tty output)  brew upgrade"). The shell must run in its own session, so it
+// has no controlling terminal to grab, whatever the command.
 func TestHarvestCommandRunsInOwnSession(t *testing.T) {
 	cmd := harvestCommand(context.Background(), []string{"/bin/sh", "-c", "true"})
 	if cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setsid {

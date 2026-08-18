@@ -191,7 +191,11 @@ func LoadConfig(path string) (*Config, error) {
 	if shell == "" {
 		shell = "/bin/zsh"
 	}
-	cfg.EnvCommand = []string{shell, "-ilc", "env -0"}
+	// A login shell, so ~/.zshenv and ~/.zprofile (or the bash/fish
+	// equivalents) are read; NOT interactive — see the note in the example
+	// config: interactive startup drags in prompt/plugin machinery that a
+	// probe doesn't need, and an interactive zsh grabs the controlling tty.
+	cfg.EnvCommand = []string{shell, "-lc", "env -0"}
 
 	if raw.Env != nil {
 		if len(raw.Env.Command) > 0 {

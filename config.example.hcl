@@ -33,15 +33,22 @@ template = "${coalesce(file("~/.local/var/herdr_window_title.${session}"), sessi
 
 env {
   # Command that prints the environment as NUL-separated KEY=VALUE pairs.
-  # The default spawns your login shell interactively, so the plugin sees
-  # exactly what a fresh terminal would — including Overseer's variables.
-  # The command runs with a scrubbed minimal environment (HOME, USER, SHELL,
-  # TERM, locale) so shell startup rebuilds everything from scratch; the herdr
-  # server's own stale environment is never passed through.
-  command = ["zsh", "-ilc", "env -0"]   # default: [$SHELL, "-ilc", "env -0"]
+  # The default spawns your LOGIN shell — non-interactively — so the plugin
+  # sees what ~/.zshenv and ~/.zprofile (bash: ~/.bash_profile, fish:
+  # config.fish) export. Anything the template needs (Overseer's variables,
+  # say) must therefore be exported from those files, not only from ~/.zshrc:
+  # an interactive probe would also start prompt and plugin machinery (atuin,
+  # starship, ...) that has no business running just to scrape the
+  # environment, and an interactive zsh takes over the controlling terminal,
+  # which can stop your foreground command with SIGTTOU when the probe runs
+  # from a shell hook. The command runs with a scrubbed minimal environment
+  # (HOME, USER, SHELL, TERM, locale) so shell startup rebuilds everything
+  # from scratch; the herdr server's own stale environment is never passed
+  # through. It also runs in its own session, without a controlling terminal.
+  command = ["zsh", "-lc", "env -0"]   # default: [$SHELL, "-lc", "env -0"]
 
-  # An interactive shell is slow (~0.8s) and herdr events arrive in bursts,
-  # so the harvested environment is cached this long. The refresh action
+  # A shell spawn is not free and herdr events arrive in bursts, so the
+  # harvested environment is cached this long. The refresh action
   # (`herdr plugin action invoke davidolrik.titles.refresh`) always bypasses
   # the cache.
   ttl = "10s"
