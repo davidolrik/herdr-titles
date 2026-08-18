@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -53,6 +54,23 @@ func cleanEnv() []string {
 	return env
 }
 
+// harvestCommand builds the harvest shell's exec.Cmd: the scrubbed
+// environment, no stdin, and — load-bearing — its OWN SESSION. The command
+// is an interactive shell (`$SHELL -ilc`), and an interactive zsh that can
+// open its controlling terminal makes itself that terminal's foreground
+// process group. Spawned from a shell hook, whose controlling terminal is the
+// user's pane, it stole the tty from the user's foreground command, which was
+// then stopped with SIGTTOU on its next tcsetattr ("zsh: suspended (tty
+// output)  brew upgrade"). A new session has no controlling terminal, so
+// there is nothing to grab; the daemon and herdr's own hook spawns already
+// run that way.
+func harvestCommand(ctx context.Context, command []string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
+	cmd.Env = cleanEnv()
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	return cmd
+}
+
 // HarvestEnv returns the environment exported by running command (expected to
 // emit `env -0` style output). The raw output is cached at cachePath; a cache
 // younger than ttl is reused so bursts of herdr events don't each spawn an
@@ -68,8 +86,7 @@ func HarvestEnv(command []string, cachePath string, ttl time.Duration, bypassCac
 
 	ctx, cancel := context.WithTimeout(context.Background(), shellTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
-	cmd.Env = cleanEnv()
+	cmd := harvestCommand(ctx, command)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 	if err := cmd.Run(); err != nil {

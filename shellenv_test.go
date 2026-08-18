@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -116,5 +118,37 @@ func TestHarvestEnvCommandFailure(t *testing.T) {
 	_, err := HarvestEnv([]string{"/bin/sh", "-c", "exit 3"}, cache, time.Minute, false)
 	if err == nil {
 		t.Fatal("expected error from failing command, got nil")
+	}
+}
+
+// The harvest shell is interactive (`$SHELL -ilc`), and an interactive zsh
+// that can open its controlling terminal makes itself the terminal's
+// foreground process group. Spawned from a shell hook — whose controlling
+// terminal is the user's pane — that stole the tty from the user's own
+// foreground command, which then got SIGTTOU on its next tcsetattr ("zsh:
+// suspended (tty output)  brew upgrade"). The shell must run in its own
+// session, so it has no controlling terminal to grab.
+func TestHarvestCommandRunsInOwnSession(t *testing.T) {
+	cmd := harvestCommand(context.Background(), []string{"/bin/sh", "-c", "true"})
+	if cmd.SysProcAttr == nil || !cmd.SysProcAttr.Setsid {
+		t.Fatalf("harvest command not detached into its own session: %+v", cmd.SysProcAttr)
+	}
+	if cmd.Stdin != nil {
+		t.Errorf("harvest command inherits stdin: %v", cmd.Stdin)
+	}
+	// Behavioral check where the test itself has a controlling terminal: the
+	// child must not see one.
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		t.Skip("no controlling terminal; behavioral check skipped")
+	}
+	tty.Close()
+	env, err := HarvestEnv([]string{"/bin/sh", "-c", `if (: </dev/tty) 2>/dev/null; then printf 'CTTY=yes\0'; else printf 'CTTY=no\0'; fi`},
+		filepath.Join(t.TempDir(), "cache"), time.Hour, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env["CTTY"] != "no" {
+		t.Errorf("harvest shell can open its controlling terminal (CTTY=%q); it would grab the tty", env["CTTY"])
 	}
 }
