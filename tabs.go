@@ -299,51 +299,84 @@ func ReconcileTabs(sockPath string, snap *Snapshot, cfg *TabsConfig, states TabS
 	var seen []string
 	for _, tab := range snap.Tabs {
 		seen = append(seen, tab.TabID)
-
-		force := forceTab != "" && forceTab == tab.TabID
-		// Cheap skip for opted-out tabs: no process-info, no state churn.
-		// A cleared label (empty or reverted to the bare tab number) still
-		// falls through so Eligible can re-adopt it.
-		if st, ok := states[tab.TabID]; ok && !st.Enabled && !isPlaceholder(tab.Label) && !force {
-			continue
-		}
-
-		// A reset rejects whatever title the pane carries right now: it is
-		// remembered so the tab is named by its program until the pane emits
-		// a different title. An existing dismissal stays only while the pane
-		// still shows that exact title.
-		dismissed := states[tab.TabID].DismissedTitle
-		current := paneTitle(activePane(tab, snap), snap)
-		switch {
-		case force, isClearGesture(tab.Label):
-			// The reset action, or the whitespace rename the README teaches
-			// (herdr's rename UI accepts spaces but not an empty name), both
-			// reject the current title. Herdr's own reversion to the bare tab
-			// number is not a user gesture and keeps the title.
-			dismissed = current
-		case dismissed != "" && current != dismissed:
-			dismissed = ""
-		}
-
-		name, ok := computeTabName(sockPath, tab, snap, cfg, dismissed)
-		if !ok {
-			continue
-		}
-		// An empty name is only a real label under hide_shell.
-		if name == "" && !cfg.HideShell {
-			continue
-		}
-		if !states.Eligible(tab.TabID, tab.Label, name, force) {
-			continue
-		}
-		if name != tab.Label {
-			renameTab(sockPath, tab.TabID, name)
-			if tab.TabID == snap.FocusedTabID {
-				snap.TabLabel = name
-			}
-		}
-		// Ownership is recorded even when no rename was needed.
-		states[tab.TabID] = TabState{Auto: name, Enabled: true, DismissedTitle: dismissed}
+		reconcileTab(sockPath, tab, snap, cfg, states, forceTab != "" && forceTab == tab.TabID)
 	}
 	states.Prune(seen)
+}
+
+// ReconcileTabByID is a full pass narrowed to one tab — the shell hook's
+// path under terminal_titles. The daemon's pane.updated stream only speaks
+// for panes that publish a title; a pane that never does (a shell without
+// the integration, HERDR_TITLES_NO_TITLE=1, a command whose first word is a
+// function or an assignment) would otherwise change its tab only on some
+// unrelated event's full pass, and a command that ended in a background tab
+// would keep the tab until the tab was next focused. It computes exactly
+// what the next full pass would (titles win, dismissals and multi-pane focus
+// honored, process-info only for an untitled pane), so it can never disagree
+// with the daemon. A tab the snapshot no longer knows is a no-op. The caller
+// holds the per-session lock.
+func ReconcileTabByID(sockPath, statePath, tabID string, cfg *TabsConfig) error {
+	snap, err := FetchSnapshot(sockPath)
+	if err != nil {
+		return err
+	}
+	for _, tab := range snap.Tabs {
+		if tab.TabID != tabID {
+			continue
+		}
+		states := LoadTabStates(statePath)
+		reconcileTab(sockPath, tab, snap, cfg, states, false)
+		return SaveTabStates(statePath, states)
+	}
+	return nil
+}
+
+// reconcileTab is one tab's share of a pass: compute the desired label,
+// check eligibility, rename only when the label actually changes, and record
+// ownership. force re-adopts the tab regardless of its opt-out (the reset
+// action).
+func reconcileTab(sockPath string, tab Tab, snap *Snapshot, cfg *TabsConfig, states TabStates, force bool) {
+	// Cheap skip for opted-out tabs: no process-info, no state churn.
+	// A cleared label (empty or reverted to the bare tab number) still
+	// falls through so Eligible can re-adopt it.
+	if st, ok := states[tab.TabID]; ok && !st.Enabled && !isPlaceholder(tab.Label) && !force {
+		return
+	}
+
+	// A reset rejects whatever title the pane carries right now: it is
+	// remembered so the tab is named by its program until the pane emits
+	// a different title. An existing dismissal stays only while the pane
+	// still shows that exact title.
+	dismissed := states[tab.TabID].DismissedTitle
+	current := paneTitle(activePane(tab, snap), snap)
+	switch {
+	case force, isClearGesture(tab.Label):
+		// The reset action, or the whitespace rename the README teaches
+		// (herdr's rename UI accepts spaces but not an empty name), both
+		// reject the current title. Herdr's own reversion to the bare tab
+		// number is not a user gesture and keeps the title.
+		dismissed = current
+	case dismissed != "" && current != dismissed:
+		dismissed = ""
+	}
+
+	name, ok := computeTabName(sockPath, tab, snap, cfg, dismissed)
+	if !ok {
+		return
+	}
+	// An empty name is only a real label under hide_shell.
+	if name == "" && !cfg.HideShell {
+		return
+	}
+	if !states.Eligible(tab.TabID, tab.Label, name, force) {
+		return
+	}
+	if name != tab.Label {
+		renameTab(sockPath, tab.TabID, name)
+		if tab.TabID == snap.FocusedTabID {
+			snap.TabLabel = name
+		}
+	}
+	// Ownership is recorded even when no rename was needed.
+	states[tab.TabID] = TabState{Auto: name, Enabled: true, DismissedTitle: dismissed}
 }

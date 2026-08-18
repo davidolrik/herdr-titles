@@ -498,15 +498,15 @@ func TestFastPath(t *testing.T) {
 	}
 
 	// terminal titles with the daemon (watch_titles defaults true): the hook
-	// never renames — the daemon is the single writer for these panes, and
-	// every rename the plugin makes fires tab.renamed, which schedules a full
-	// pass that recomputes from the pane's title; a hook rename the title
-	// disagrees with is simply undone, so the two must never diverge. The
-	// program a command starts is conveyed through the pane TITLE instead:
-	// the shell integration publishes it at preexec (see shell/hook.*), and
-	// the daemon's pane.updated stream applies it. The hook still probes for
-	// a dead daemon; daemonAlive's O_CREATE open leaves the lock file behind,
-	// so its reappearance proves the probe ran.
+	// reconciles ITS OWN tab from a fresh snapshot, computing exactly what a
+	// full pass would — so it can never disagree with the daemon (the single
+	// other writer), yet a pane that publishes no title (a shell without the
+	// integration, HERDR_TITLES_NO_TITLE=1) still follows its foreground
+	// program at preexec and is restored at precmd without waiting for some
+	// unrelated event's full pass. A titled pane is named from its title,
+	// never from process-info. The hook still probes for a dead daemon;
+	// daemonAlive's O_CREATE open leaves the lock file behind, so its
+	// reappearance proves the probe ran.
 	if err := os.WriteFile(filepath.Join(configDir, "config.hcl"),
 		[]byte("template = \"x\"\ntabs { terminal_titles = true }\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -515,17 +515,34 @@ func TestFastPath(t *testing.T) {
 	if err := os.Remove(lockPath); err != nil {
 		t.Fatalf("lock file missing before terminal-titles run: %v", err)
 	}
-	for _, pane := range []struct{ title, why string }{
-		{"", "untitled"},
-		{"user@host: ~/proj", "titled"},
-	} {
-		api.setPaneTitle("w1:p1", "w1:t1", "", pane.title)
-		run("preexec", "hx x")
-		run("precmd", "zsh")
-		_, renames, _ = api.recorded()
-		if len(renames) != before {
-			t.Fatalf("terminal_titles=true, %s pane: hook renamed (%v); the daemon is the only writer", pane.why, renames)
-		}
+	// The tab is owned from the earlier renames (last set to "fish"); the
+	// snapshot is what the hook reads now.
+	api.setTab("w1:t1", "fish")
+	untitled := singlePaneSnap("fish")
+	api.setSnapshot(t, untitled)
+	api.setProcessInfo("w1:p1", "hx", "hx x")
+	run("preexec", "hx x")
+	_, renames, _ = api.recorded()
+	if len(renames) != before+1 || renames[before] != "w1:t1=hx" {
+		t.Fatalf("terminal_titles=true, untitled pane preexec: renames = %v, want trailing w1:t1=hx", renames)
+	}
+	untitled.Tabs[0].Label = "hx"
+	api.setSnapshot(t, untitled)
+	api.setProcessInfo("w1:p1", "zsh", "-zsh")
+	run("precmd", "zsh")
+	_, renames, _ = api.recorded()
+	if len(renames) != before+2 || renames[before+1] != "w1:t1=zsh" {
+		t.Fatalf("terminal_titles=true, untitled pane precmd: renames = %v, want trailing w1:t1=zsh", renames)
+	}
+	titled := singlePaneSnap("zsh")
+	titled.Panes[0].Title = "user@host: ~/proj"
+	api.setSnapshot(t, titled)
+	api.setProcessInfo("w1:p1", "hx", "hx x")
+	run("preexec", "hx x")
+	run("precmd", "zsh")
+	_, renames, _ = api.recorded()
+	if len(renames) != before+3 || renames[before+2] != "w1:t1=user@host: ~/proj" {
+		t.Fatalf("terminal_titles=true, titled pane: renames = %v, want one trailing rename to the title", renames)
 	}
 	if _, err := os.Stat(lockPath); err != nil {
 		t.Errorf("terminal-titles fast path skipped the daemon probe: %v", err)

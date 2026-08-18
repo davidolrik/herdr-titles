@@ -164,17 +164,23 @@ prompt never blocks, and stay registered across re-sourcing. On bash they
 cooperate with bash-preexec/ble.sh/atuin instead of clobbering the DEBUG
 trap; see the comments in `shell/hook.bash`.
 
-With `tabs { terminal_titles = true }`, the daemon is the **single writer**
-for tab names: its `pane.updated` stream follows the pane's title, and every
-rename the plugin makes fires `tab.renamed`, which reconciles the tab from
-that title again — so anything else naming the tab would just be undone.
-Herdr has no "foreground command changed" event, though, and a program that
-sets no title (helix, less, most CLI tools) would be invisible. The shell
-integration covers that through the title itself: when a real program starts,
-it publishes the program's name as the pane title (a builtin like `cd`
-publishes nothing, so the prompt's title stands), the daemon applies it, and
-a program that sets its own title (nvim, ssh) overrides it a moment later;
-back at the prompt the shell republishes its own title. Keep the integration
+With `tabs { terminal_titles = true }`, the pane's **title is the truth** for
+its tab name: the daemon's `pane.updated` stream follows it, and every rename
+the plugin makes fires `tab.renamed`, which reconciles the tab from that title
+again — so anything naming the tab from some other source would just be
+undone. Herdr has no "foreground command changed" event, though, and a
+program that sets no title (helix, less, most CLI tools) would be invisible.
+The shell integration covers that through the title itself: when a real
+program starts, it publishes the program's name as the pane title (a builtin
+like `cd` publishes nothing, so the prompt's title stands), the daemon applies
+it, and a program that sets its own title (nvim, ssh) overrides it a moment
+later; back at the prompt the shell republishes its own title. The hooks also
+reconcile their own tab from a fresh snapshot at every preexec and precmd,
+computing exactly what the daemon would — so a pane that publishes no title
+at all (a shell started before the integration was installed,
+`HERDR_TITLES_NO_TITLE=1`, a command whose first word is a function or an
+assignment) still follows its foreground program and is restored the moment
+it is back at the prompt, even in a background tab. Keep the integration
 installed. Because the daemon is what applies titles, `terminal_titles`
 requires `watch_titles` (the default); the plugin refuses a config that
 enables titles with the daemon off.

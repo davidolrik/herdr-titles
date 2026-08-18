@@ -35,10 +35,10 @@ if [[ -n ${HERDR_PANE_ID:-} && -x $_hwt_bin ]]; then
   # anything else (function, builtin, reserved word, typo) gets a "shell"
   # marker telling the engine to sample the pane's real foreground process.
   #
-  # Under `tabs { terminal_titles = true }` the daemon is the single writer
-  # for the tab, and the program a command starts reaches it through the pane
-  # TITLE: for a real program, publish its basename as the title here (OSC 2,
-  # to $HERDR_TITLES_TTY — a test seam — or /dev/tty). Builtins and functions
+  # Under `tabs { terminal_titles = true }` the pane TITLE names the tab, and
+  # the program a command starts reaches it through that title: for a real
+  # program, publish its basename as the title here (OSC 2, to
+  # $HERDR_TITLES_TTY — a test seam — or /dev/tty). Builtins and functions
   # (cd, z, aliases) publish nothing, so the prompt's cwd title stands and the
   # tab never flashes the shell name; a program that sets its own title
   # (nvim) simply overrides this a moment later. Harmless when terminal

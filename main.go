@@ -168,26 +168,6 @@ func runFast(mode string, args []string) error {
 		return nil
 	}
 
-	// Under terminal titles the hook never renames: the daemon is the SINGLE
-	// writer for these panes (config guarantees watch_titles is on). Every
-	// rename the plugin makes fires tab.renamed, which schedules a full pass
-	// that recomputes the tab from the pane's title — so a hook rename that
-	// the title disagrees with is simply undone a moment later, and the two
-	// writers must never diverge. Herdr has no "foreground command changed"
-	// event, so the program a command starts is conveyed through the pane's
-	// TITLE instead: the shell integration publishes it at preexec (see
-	// shell/hook.*), the daemon's pane.updated stream applies it, and a
-	// program that sets its own title (nvim) overrides it moments later. The
-	// hook here just revives a dead daemon.
-	if tabs.TerminalTitles {
-		stateDir := pluginStateDir()
-		if err := os.MkdirAll(stateDir, 0o755); err != nil {
-			return err
-		}
-		ensureDaemon(stateDir, envOr("HERDR_SESSION", "default"))
-		return nil
-	}
-
 	var prog, cmdline string
 	sampled := false
 	switch mode {
@@ -214,8 +194,11 @@ func runFast(mode string, args []string) error {
 	}
 
 	// The shell construct just started; give the real foreground process a
-	// beat to appear. Deliberately before taking the lock.
-	if sampled {
+	// beat to appear. Deliberately before taking the lock. Under terminal
+	// titles the same beat lets herdr parse the title the integration just
+	// published, and lets a titleless pane's command exec, before the
+	// snapshot below is taken.
+	if sampled || tabs.TerminalTitles {
 		time.Sleep(200 * time.Millisecond)
 	}
 
@@ -223,9 +206,40 @@ func runFast(mode string, args []string) error {
 	if err := os.MkdirAll(stateDir, 0o755); err != nil {
 		return err
 	}
+	session := envOr("HERDR_SESSION", "default")
 
 	// Every shell prompt is a chance to revive a dead watch daemon.
-	ensureDaemon(stateDir, envOr("HERDR_SESSION", "default"))
+	ensureDaemon(stateDir, session)
+
+	// Under terminal titles the daemon is the writer for titled panes: it
+	// applies the pane.updated stream (config guarantees watch_titles is on),
+	// and every rename the plugin makes fires tab.renamed, which schedules a
+	// full pass that recomputes the tab from the pane's title — so a hook
+	// rename derived from anything BUT the title would be undone a moment
+	// later, and the two must never diverge. Herdr has no "foreground command
+	// changed" event, so the program a command starts is conveyed through the
+	// pane's TITLE: the shell integration publishes it at preexec (see
+	// shell/hook.*), and a program that sets its own title (nvim) overrides
+	// it moments later. But a pane that publishes no title at all — a shell
+	// without the integration, HERDR_TITLES_NO_TITLE=1, a command whose first
+	// word is a function or an assignment — has no stream to speak for it,
+	// and would change its tab only on some unrelated event's full pass: a
+	// command that ended in a background tab kept the tab until it was next
+	// focused. So the hook reconciles its own tab from a fresh snapshot,
+	// computing exactly what the next full pass would (titles win, so it can
+	// never disagree with the daemon; process-info only for an untitled
+	// pane). A rerun raised meanwhile escalates to a full reconcile, which is
+	// a superset — a rename the daemon handed over is not lost.
+	if tabs.TerminalTitles {
+		first := true
+		return withLock(stateDir, session, func() error {
+			if !first {
+				return pass("rerun", true, false)
+			}
+			first = false
+			return ReconcileTabByID(sessionSocketPath(), tabStatePath(stateDir, session), tabID, tabs)
+		})
+	}
 
 	// First pass under the lock is the single-tab fast rename; any rerun flag
 	// raised meanwhile escalates to a full reconcile, which is a superset —

@@ -771,3 +771,92 @@ func TestRenameTabForTitlePlainPane(t *testing.T) {
 		t.Errorf("renames = %v, want trailing plain-formatted agent title", renames)
 	}
 }
+
+// The shell hook's targeted reconcile under terminal_titles: one snapshot,
+// one tab, the same naming rules as a full pass. A pane that publishes no
+// title (a shell without the integration, HERDR_TITLES_NO_TITLE=1) has no
+// pane.updated stream to speak for it, so preexec/precmd are the only
+// moments its tab can follow the foreground program.
+func TestReconcileTabByIDNamesUntitledPaneByProgram(t *testing.T) {
+	f := newTabsFixture(t)
+	statePath := filepath.Join(t.TempDir(), "tabstate.json")
+	f.cfg.TerminalTitles = true
+	// The tab is already owned (a full pass named it after its shell).
+	if err := SaveTabStates(statePath, TabStates{"w1:t1": {Auto: "zsh", Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A command started in a titleless pane: named by its process.
+	f.api.setSnapshot(t, singlePaneSnap("zsh"))
+	f.api.setProcessInfo("w1:p1", "sleep", "sleep 30")
+	if err := ReconcileTabByID(f.api.sockPath, statePath, "w1:t1", f.cfg); err != nil {
+		t.Fatalf("ReconcileTabByID: %v", err)
+	}
+	if got := f.renames(t); len(got) != 1 || got[0] != "w1:t1=sleep" {
+		t.Fatalf("renames = %v, want [w1:t1=sleep]", got)
+	}
+
+	// Back at the prompt: restored to the shell, with no herdr event needed.
+	f.api.setSnapshot(t, singlePaneSnap("sleep"))
+	f.api.setProcessInfo("w1:p1", "zsh", "-zsh")
+	if err := ReconcileTabByID(f.api.sockPath, statePath, "w1:t1", f.cfg); err != nil {
+		t.Fatalf("ReconcileTabByID: %v", err)
+	}
+	if got := f.renames(t); len(got) != 2 || got[1] != "w1:t1=zsh" {
+		t.Fatalf("renames = %v, want trailing w1:t1=zsh", got)
+	}
+	if st := LoadTabStates(statePath)["w1:t1"]; !st.Enabled || st.Auto != "zsh" {
+		t.Errorf("persisted state = %+v, want owned zsh", st)
+	}
+}
+
+// A titled pane is named from its title exactly as the full pass would —
+// never from process-info — so the hook and the daemon can never disagree.
+func TestReconcileTabByIDTitledPaneUsesTitle(t *testing.T) {
+	f := newTabsFixture(t)
+	statePath := filepath.Join(t.TempDir(), "tabstate.json")
+	f.cfg.TerminalTitles = true
+	if err := SaveTabStates(statePath, TabStates{"w1:t1": {Auto: "zsh", Enabled: true}}); err != nil {
+		t.Fatal(err)
+	}
+	snap := singlePaneSnap("zsh")
+	snap.Panes[0].Title = "make -j all"
+	f.api.setSnapshot(t, snap)
+	f.api.setProcessInfo("w1:p1", "sleep", "sleep 30")
+
+	if err := ReconcileTabByID(f.api.sockPath, statePath, "w1:t1", f.cfg); err != nil {
+		t.Fatalf("ReconcileTabByID: %v", err)
+	}
+	if got := f.renames(t); len(got) != 1 || got[0] != "w1:t1=make -j all" {
+		t.Errorf("renames = %v, want [w1:t1=make -j all]", got)
+	}
+	f.api.mu.Lock()
+	infoReqs := f.api.infoReqs
+	f.api.mu.Unlock()
+	if infoReqs != 0 {
+		t.Errorf("titled pane made %d process-info requests", infoReqs)
+	}
+}
+
+// A tab the snapshot does not know (closed under the hook's feet) and a
+// hand-named tab are both left alone.
+func TestReconcileTabByIDLeavesUnknownAndHandNamedAlone(t *testing.T) {
+	f := newTabsFixture(t)
+	statePath := filepath.Join(t.TempDir(), "tabstate.json")
+	f.cfg.TerminalTitles = true
+	f.api.setSnapshot(t, singlePaneSnap("my notes"))
+	f.api.setProcessInfo("w1:p1", "sleep", "sleep 30")
+
+	if err := ReconcileTabByID(f.api.sockPath, statePath, "w9:t9", f.cfg); err != nil {
+		t.Fatalf("unknown tab: %v", err)
+	}
+	if err := ReconcileTabByID(f.api.sockPath, statePath, "w1:t1", f.cfg); err != nil {
+		t.Fatalf("hand-named tab: %v", err)
+	}
+	if got := f.renames(t); len(got) != 0 {
+		t.Errorf("renames = %v, want none", got)
+	}
+	if st, ok := LoadTabStates(statePath)["w1:t1"]; !ok || st.Enabled {
+		t.Errorf("hand-named tab not opted out: %+v (seen=%v)", st, ok)
+	}
+}

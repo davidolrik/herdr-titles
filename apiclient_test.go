@@ -276,3 +276,49 @@ func TestAPIRequest(t *testing.T) {
 		t.Error("empty socket path did not error")
 	}
 }
+
+// setSnapshot serves snap as the session.snapshot result — the inverse of
+// decodeSnapshot for the fields the plugin reads, so tests can drive the
+// snapshot-based paths from the same Snapshot values the unit tests build.
+func (f *fakeAPI) setSnapshot(t *testing.T, snap *Snapshot) {
+	t.Helper()
+	tabs := []map[string]any{}
+	for _, tb := range snap.Tabs {
+		tabs = append(tabs, map[string]any{
+			"tab_id": tb.TabID, "workspace_id": tb.WorkspaceID, "label": tb.Label,
+			"pane_count": tb.PaneCount, "focused": tb.Focused,
+		})
+	}
+	panes := []map[string]any{}
+	for _, p := range snap.Panes {
+		panes = append(panes, map[string]any{
+			"pane_id": p.PaneID, "tab_id": p.TabID, "agent": p.Agent,
+			"focused": p.Focused, "terminal_title_stripped": p.Title,
+		})
+	}
+	agents := []map[string]any{}
+	for _, a := range snap.Agents {
+		agents = append(agents, map[string]any{
+			"agent_status": a.Status, "workspace_id": a.WorkspaceID, "pane_id": a.PaneID,
+			"agent": a.Kind, "terminal_title_stripped": a.Title,
+		})
+	}
+	layouts := []map[string]any{}
+	for tabID, paneID := range snap.TabFocus {
+		layouts = append(layouts, map[string]any{"tab_id": tabID, "focused_pane_id": paneID})
+	}
+	data, err := json.Marshal(map[string]any{"snapshot": map[string]any{
+		"focused_workspace_id": snap.FocusedWorkspaceID,
+		"focused_tab_id":       snap.FocusedTabID,
+		"workspaces": []map[string]any{
+			{"workspace_id": snap.FocusedWorkspaceID, "label": snap.WorkspaceLabel},
+		},
+		"tabs": tabs, "panes": panes, "agents": agents, "layouts": layouts,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.snapshot = data
+}
