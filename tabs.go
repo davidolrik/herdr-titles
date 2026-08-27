@@ -131,25 +131,31 @@ func paneInfo(sockPath, paneID string) (Pane, bool) {
 	}
 	var payload struct {
 		Pane *struct {
-			PaneID  string `json:"pane_id"`
-			TabID   string `json:"tab_id"`
-			Agent   string `json:"agent"`
-			Label   string `json:"label"`
-			Focused bool   `json:"focused"`
-			Title   string `json:"terminal_title_stripped"`
+			PaneID        string `json:"pane_id"`
+			TabID         string `json:"tab_id"`
+			Agent         string `json:"agent"`
+			Label         string `json:"label"`
+			Focused       bool   `json:"focused"`
+			Title         string `json:"terminal_title_stripped"`
+			CWD           string `json:"cwd"`
+			ForegroundCWD string `json:"foreground_cwd"`
 		} `json:"pane"`
 	}
 	if err := json.Unmarshal(result, &payload); err != nil || payload.Pane == nil {
 		return Pane{}, false
 	}
 	p := payload.Pane
-	title := p.Label
+	title := p.Title
 	if title == "" {
-		title = p.Title
+		title = p.Label
+	}
+	cwd := p.ForegroundCWD
+	if cwd == "" {
+		cwd = p.CWD
 	}
 	return Pane{
 		PaneID: p.PaneID, TabID: p.TabID, Agent: p.Agent,
-		Focused: p.Focused, Title: title,
+		Focused: p.Focused, Title: title, CWD: cwd,
 	}, true
 }
 
@@ -170,21 +176,36 @@ func computeTabName(sockPath string, tab Tab, snap *Snapshot, cfg *TabsConfig, d
 	// Titles win over the process-derived name (and skip the process-info
 	// call). The agent's reported title and the pane's terminal title are
 	// the same underlying string in a herdr snapshot.
-	var agentKind, title string
+	var agentKind, title, cwd string
 	for _, a := range snap.Agents {
 		if a.PaneID == paneID {
-			agentKind, title = a.Kind, a.Title
+			agentKind, title, cwd = a.Kind, a.Title, a.CWD
 			break
 		}
 	}
-	if title == "" {
-		for _, p := range snap.Panes {
-			if p.PaneID == paneID {
-				if agentKind == "" {
-					agentKind = p.Agent
-				}
+	for _, p := range snap.Panes {
+		if p.PaneID == paneID {
+			if agentKind == "" {
+				agentKind = p.Agent
+			}
+			if title == "" {
 				title = p.Title
-				break
+			}
+			if cwd == "" {
+				cwd = p.CWD
+			}
+			break
+		}
+	}
+	if (title == "" || isGenericAgentTitle(title)) && cfg.AgentTitles {
+		if agentKind == "" && (tab.Focused || tab.PaneCount == 1) {
+			if prog, _, err := paneProgram(sockPath, paneID); err == nil && isAgentProgram(prog) {
+				agentKind = prog
+			}
+		}
+		if agentKind != "" {
+			if agentTitle := readAgentTitle(agentKind, cwd); agentTitle != "" {
+				title = agentTitle
 			}
 		}
 	}
@@ -204,6 +225,7 @@ func computeTabName(sockPath string, tab Tab, snap *Snapshot, cfg *TabsConfig, d
 	}
 	prog, cmdline, err := paneProgram(sockPath, paneID)
 	if err != nil || prog == "" {
+		// Could not determine the program: leave the tab name alone.
 		return "", false
 	}
 	return FormatTabName(prog, cmdline, cfg), true
@@ -228,15 +250,13 @@ func paneTitle(paneID string, snap *Snapshot) string {
 	return ""
 }
 
-// RenameTabForTitle applies a pane's terminal title to its tab — the daemon's
-// targeted path for pane.updated events, which carry the new title in the
-// payload. An empty agentKind means a plain pane (shell/program title);
-// otherwise the title is an agent session title. An empty title is a clear:
-// the tab falls back to the pane's foreground program name — the one case
-// here that needs a process-info call. Don't rename a multi-pane tab if we
-// don't know the focused pane, to avoid bouncing between panes. The caller
-// holds the per-session lock. An opted-out tab is a no-op. retryFull=true
-// means a transient error (tab.get or process-info) prevented a rename that
+// RenameTabForTitle is the targeted rename path for pane.updated events.
+// It computes the title-derived tab name without fetching a full snapshot,
+// using only the tab_id, pane_id, and new title from the event. It does not
+// handle structural events (pane closed, tab moved), which still go through
+// full passes.
+//
+// Returns retryFull=true when the rename could not complete and a full pass
 // was due — the caller should schedule a full pass, because the event that
 // carried this title will not be resent.
 func RenameTabForTitle(sockPath, statePath, tabID, paneID, agentKind, title string, focusKnown bool, cfg *TabsConfig) (retryFull bool, err error) {
@@ -256,9 +276,18 @@ func RenameTabForTitle(sockPath, statePath, tabID, paneID, agentKind, title stri
 		// focused pane becomes known.
 		return false, nil
 	}
-	if !cfg.TerminalTitles && cfg.AgentTitles && agentKind == "" && title != "" {
-		if prog, _, err := paneProgram(sockPath, paneID); err == nil && isAgentProgram(prog) {
-			agentKind = prog
+	if (title == "" || isGenericAgentTitle(title)) && cfg.AgentTitles {
+		if agentKind == "" && (tabFocused || paneCount == 1) {
+			if prog, _, err := paneProgram(sockPath, paneID); err == nil && isAgentProgram(prog) {
+				agentKind = prog
+			}
+		}
+		if agentKind != "" {
+			if pane, ok := paneInfo(sockPath, paneID); ok {
+				if agentTitle := readAgentTitle(agentKind, pane.CWD); agentTitle != "" {
+					title = agentTitle
+				}
+			}
 		}
 	}
 	if !cfg.TerminalTitles && (!cfg.AgentTitles || agentKind == "") {

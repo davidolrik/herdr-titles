@@ -181,11 +181,26 @@ func FormatTabName(program, cmdline string, cfg *TabsConfig) string {
 	return truncateRunes(name, cfg.MaxNameLen)
 }
 
+var (
+	agentPrefixRegex = regexp.MustCompile(`^(?:[✳✢·…]\s*|OC\s*\|\s*)`)
+	agentSuffixRegex = regexp.MustCompile(`\s*-\s*(?:[✅⏳✓⌛×·]|Ready|Working|Blocked|\.\.\.).*$`)
+)
+
+func cleanAgentTitle(title string) string {
+	title = strings.TrimSpace(title)
+	title = agentPrefixRegex.ReplaceAllString(title, "")
+	title = agentSuffixRegex.ReplaceAllString(title, "")
+	return strings.TrimSpace(title)
+}
+
 // FormatAgentTitle names a tab after an agent's session title (herdr's
 // terminal_title_stripped) instead of the agent's program name. The icon
 // still identifies the agent kind; titles get their own, longer limit.
 func FormatAgentTitle(agentKind, title string, cfg *TabsConfig) string {
-	name := title
+	name := cleanAgentTitle(title)
+	if name == "" {
+		name = title
+	}
 	if cfg.Icons.Enabled {
 		name = applyIcon(agentKind, name, &cfg.Icons)
 	}
