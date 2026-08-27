@@ -177,6 +177,7 @@ func classifyEvent(line []byte, st *classifyState, agentTitles, terminalTitles b
 				PaneID  string `json:"pane_id"`
 				TabID   string `json:"tab_id"`
 				Agent   string `json:"agent"`
+				Label   string `json:"label"`
 				Focused bool   `json:"focused"`
 				Title   string `json:"terminal_title_stripped"`
 			} `json:"pane"`
@@ -198,17 +199,21 @@ func classifyEvent(line []byte, st *classifyState, agentTitles, terminalTitles b
 		if p == nil || (!terminalTitles && (!agentTitles || p.Agent == "")) {
 			return nil
 		}
+		title := p.Label
+		if title == "" {
+			title = p.Title
+		}
 		st.paneTab[p.PaneID] = p.TabID
-		if st.lastTitles[p.PaneID] == p.Title {
+		if st.lastTitles[p.PaneID] == title {
 			return nil
 		}
-		st.lastTitles[p.PaneID] = p.Title
+		st.lastTitles[p.PaneID] = title
 		focus := st.tabFocus[p.TabID]
 		if focus != "" && focus != p.PaneID {
 			return nil // not the pane the tab is named after
 		}
 		return &trigger{kind: triggerRename, pane: paneEvent{
-			PaneID: p.PaneID, TabID: p.TabID, Agent: p.Agent, Title: p.Title,
+			PaneID: p.PaneID, TabID: p.TabID, Agent: p.Agent, Title: title,
 			FocusKnown: focus == p.PaneID,
 		}}
 	case "pane_focused":

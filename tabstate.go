@@ -57,6 +57,34 @@ func isPlaceholder(label string) bool {
 	return true
 }
 
+// isDefaultLabel reports whether a label is an uncustomized default (placeholder,
+// shell name, agent name, or known program name), which should be adopted rather
+// than treated as an intentional user opt-out.
+func isDefaultLabel(label string) bool {
+	if isPlaceholder(label) || isClearGesture(label) {
+		return true
+	}
+	clean := strings.TrimSpace(label)
+	for _, glyph := range builtinIcons {
+		clean = strings.TrimPrefix(clean, glyph)
+		clean = strings.TrimSpace(clean)
+	}
+	if idx := strings.Index(clean, " - "); idx != -1 {
+		clean = clean[:idx]
+	}
+	clean = strings.ToLower(clean)
+	switch clean {
+	case "agent", "agy", "cursor", "cursor-agent", "cursor-cli", "antigravity", "antigravity-cli",
+		"claude", "codex", "gemini", "opencode", "kimi", "terminal", "shell", "code", "git",
+		"zsh", "bash", "sh", "fish", "dash", "ksh":
+		return true
+	}
+	if _, ok := builtinIcons[clean]; ok {
+		return true
+	}
+	return false
+}
+
 // Eligible reports whether the tab may be auto-named, updating the state to
 // opt a hand-named tab out as a side effect. label is the tab's current
 // label; computed is the name the plugin would set (used to self-adopt tabs
@@ -70,24 +98,16 @@ func (s TabStates) Eligible(tabID, label, computed string, force bool) bool {
 	st, seen := s[tabID]
 	switch {
 	case !seen:
-		if isPlaceholder(label) || label == computed {
+		if isDefaultLabel(label) || label == computed {
 			return true
 		}
 		s[tabID] = TabState{Enabled: false} // hand-named: opt out
 		return false
 	case !st.Enabled:
-		// Only a cleared custom name re-adopts. Herdr's rename UI refuses an
-		// empty submission and reverts a dropped custom name to the bare tab
-		// number, so both placeholder forms count as "cleared".
-		return isPlaceholder(label)
+		// Only a cleared custom name or default process name re-adopts.
+		return isDefaultLabel(label)
 	default: // we own it
-		if label == st.Auto || label == "" {
-			return true
-		}
-		if isClearGesture(label) {
-			// The whitespace rename is the documented "hand it back" gesture;
-			// on an owned tab that just means "name it again now", not a
-			// manual rename to opt out of.
+		if label == st.Auto || label == "" || isClearGesture(label) {
 			return true
 		}
 		if st.Auto == "" && isPlaceholder(label) {

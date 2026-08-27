@@ -134,6 +134,7 @@ func paneInfo(sockPath, paneID string) (Pane, bool) {
 			PaneID  string `json:"pane_id"`
 			TabID   string `json:"tab_id"`
 			Agent   string `json:"agent"`
+			Label   string `json:"label"`
 			Focused bool   `json:"focused"`
 			Title   string `json:"terminal_title_stripped"`
 		} `json:"pane"`
@@ -142,9 +143,13 @@ func paneInfo(sockPath, paneID string) (Pane, bool) {
 		return Pane{}, false
 	}
 	p := payload.Pane
+	title := p.Label
+	if title == "" {
+		title = p.Title
+	}
 	return Pane{
 		PaneID: p.PaneID, TabID: p.TabID, Agent: p.Agent,
-		Focused: p.Focused, Title: p.Title,
+		Focused: p.Focused, Title: title,
 	}, true
 }
 
@@ -175,6 +180,9 @@ func computeTabName(sockPath string, tab Tab, snap *Snapshot, cfg *TabsConfig, d
 	if title == "" {
 		for _, p := range snap.Panes {
 			if p.PaneID == paneID {
+				if agentKind == "" {
+					agentKind = p.Agent
+				}
 				title = p.Title
 				break
 			}

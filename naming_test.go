@@ -49,8 +49,10 @@ func TestFormatTabNameShowProgramArgs(t *testing.T) {
 		t.Errorf("with args = %q, want full cmdline", got)
 	}
 	// name-only programs still drop args
-	if got := FormatTabName("nvim", "nvim main.go", cfg); got != "nvim" {
-		t.Errorf("name-only with args enabled = %q, want nvim", got)
+	for _, prog := range []string{"nvim", "agent", "cursor-cli", "antigravity-cli"} {
+		if got := FormatTabName(prog, prog+" arg1 arg2", cfg); got != prog {
+			t.Errorf("name-only with args enabled (%s) = %q, want %s", prog, got, prog)
+		}
 	}
 }
 
@@ -93,8 +95,10 @@ func TestFormatTabNameIcons(t *testing.T) {
 	if got := FormatTabName("nvim", "nvim", cfg); got != "\uE6AE nvim" {
 		t.Errorf("nvim icon = %q, want %q", got, "\uE6AE nvim")
 	}
-	if got := FormatTabName("claude", "claude", cfg); got != "\U000F06A9 claude" {
-		t.Errorf("claude icon = %q, want %q", got, "\U000F06A9 claude")
+	for _, prog := range []string{"claude", "agent", "cursor", "cursor-agent", "cursor-cli", "agy", "antigravity", "antigravity-cli"} {
+		if got := FormatTabName(prog, prog, cfg); got != "\U000F06A9 "+prog {
+			t.Errorf("%s icon = %q, want %q", prog, got, "\U000F06A9 "+prog)
+		}
 	}
 
 	// No icon on shell labels — precmd would flip between "zsh" and glyph+zsh.
@@ -261,17 +265,21 @@ func TestFormatAgentTitle(t *testing.T) {
 	cfg.Icons.Enabled = true
 	title := "Build herdr plugin for terminal title updates"
 
-	got := FormatAgentTitle("claude", title, cfg)
-	want := string([]rune("\U000F06A9 " + title)[:40]) // 40 runes incl. glyph and space
-	if got != want {
-		t.Errorf("agent title = %q, want %q", got, want)
-	}
-	if n := len([]rune(got)); n != 40 {
-		t.Errorf("agent title length = %d runes, want 40", n)
+	for _, agentKind := range []string{"claude", "agent", "cursor-cli", "antigravity-cli"} {
+		got := FormatAgentTitle(agentKind, title, cfg)
+		want := string([]rune("\U000F06A9 " + title)[:40]) // 40 runes incl. glyph and space
+		if got != want {
+			t.Errorf("%s agent title = %q, want %q", agentKind, got, want)
+		}
+		if n := len([]rune(got)); n != 40 {
+			t.Errorf("%s agent title length = %d runes, want 40", agentKind, n)
+		}
 	}
 
 	cfg.Icons.Enabled = false
-	if got := FormatAgentTitle("claude", "Short title", cfg); got != "Short title" {
-		t.Errorf("icons off = %q, want bare title", got)
+	for _, agentKind := range []string{"claude", "agent", "cursor-cli", "antigravity-cli"} {
+		if got := FormatAgentTitle(agentKind, "Short title", cfg); got != "Short title" {
+			t.Errorf("%s icons off = %q, want bare title", agentKind, got)
+		}
 	}
 }

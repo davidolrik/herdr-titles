@@ -245,8 +245,8 @@ func DefaultTabsConfig() *TabsConfig {
 		Shells:          []string{"zsh", "bash", "sh", "fish", "dash", "ksh"},
 		NameOnlyPrograms: []string{
 			"nvim", "vim", "vi", "view", "gvim", "git", "lazygit", "gitui", "lazydocker",
-			"claude", "codex", "aider", "pi", "gemini", "cursor", "cursor-agent", "devin",
-			"agy", "antigravity", "cline", "omp", "mastracode", "opencode", "copilot",
+			"claude", "codex", "aider", "pi", "gemini", "agent", "cursor", "cursor-agent", "cursor-cli", "devin",
+			"agy", "antigravity", "antigravity-cli", "cline", "omp", "mastracode", "opencode", "copilot",
 			"kimi", "kiro", "kiro-cli", "droid", "amp", "grok", "hermes", "kilo", "qodercli",
 		},
 		IgnoredPrograms: []string{

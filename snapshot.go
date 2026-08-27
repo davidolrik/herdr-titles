@@ -65,6 +65,7 @@ func decodeSnapshot(data []byte) (*Snapshot, error) {
 				PaneID        string `json:"pane_id"`
 				TabID         string `json:"tab_id"`
 				Agent         string `json:"agent"`
+				Label         string `json:"label"`
 				Focused       bool   `json:"focused"`
 				TitleStripped string `json:"terminal_title_stripped"`
 			} `json:"panes"`
@@ -73,6 +74,7 @@ func decodeSnapshot(data []byte) (*Snapshot, error) {
 				WorkspaceID   string `json:"workspace_id"`
 				PaneID        string `json:"pane_id"`
 				Agent         string `json:"agent"`
+				Label         string `json:"label"`
 				TitleStripped string `json:"terminal_title_stripped"`
 			} `json:"agents"`
 			Layouts []struct {
@@ -113,16 +115,31 @@ func decodeSnapshot(data []byte) (*Snapshot, error) {
 			PaneCount: t.PaneCount, Focused: t.Focused,
 		})
 	}
+	paneLabels := map[string]string{}
 	for _, p := range raw.Panes {
+		if p.Label != "" {
+			paneLabels[p.PaneID] = p.Label
+		}
+		title := p.Label
+		if title == "" {
+			title = p.TitleStripped
+		}
 		snap.Panes = append(snap.Panes, Pane{
 			PaneID: p.PaneID, TabID: p.TabID, Agent: p.Agent,
-			Focused: p.Focused, Title: p.TitleStripped,
+			Focused: p.Focused, Title: title,
 		})
 	}
 	for _, a := range raw.Agents {
+		title := a.Label
+		if title == "" {
+			title = paneLabels[a.PaneID]
+		}
+		if title == "" {
+			title = a.TitleStripped
+		}
 		snap.Agents = append(snap.Agents, Agent{
 			Status: a.AgentStatus, WorkspaceID: a.WorkspaceID,
-			PaneID: a.PaneID, Kind: a.Agent, Title: a.TitleStripped,
+			PaneID: a.PaneID, Kind: a.Agent, Title: title,
 		})
 	}
 	return snap, nil
