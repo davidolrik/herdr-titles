@@ -267,3 +267,14 @@ func DefaultTabsConfig() *TabsConfig {
 		},
 	}
 }
+
+// isAgentProgram reports whether a program binary is a known AI agent.
+func isAgentProgram(prog string) bool {
+	switch strings.ToLower(prog) {
+	case "agent", "agy", "antigravity", "antigravity-cli", "cursor", "cursor-agent", "cursor-cli",
+		"claude", "codex", "gemini", "opencode", "kimi", "devin", "aider", "cline", "omp",
+		"mastracode", "copilot", "kiro", "kiro-cli", "droid", "amp", "grok", "hermes", "kilo", "qodercli":
+		return true
+	}
+	return false
+}

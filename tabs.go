@@ -243,10 +243,6 @@ func RenameTabForTitle(sockPath, statePath, tabID, paneID, agentKind, title stri
 	if !cfg.Enabled {
 		return false, nil
 	}
-	if !cfg.TerminalTitles && (!cfg.AgentTitles || agentKind == "") {
-		// Not using terminal title as tab name
-		return false, nil
-	}
 	label, paneCount, tabFocused, ok := tabInfo(sockPath, tabID)
 	if !ok {
 		// The event's dedup entry is already committed and herdr will not
@@ -258,6 +254,15 @@ func RenameTabForTitle(sockPath, statePath, tabID, paneID, agentKind, title stri
 		// Can't determine focused pane, don't rename here. A future full
 		// pass will take care of it when the tab is focused or the layout's
 		// focused pane becomes known.
+		return false, nil
+	}
+	if !cfg.TerminalTitles && cfg.AgentTitles && agentKind == "" && title != "" {
+		if prog, _, err := paneProgram(sockPath, paneID); err == nil && isAgentProgram(prog) {
+			agentKind = prog
+		}
+	}
+	if !cfg.TerminalTitles && (!cfg.AgentTitles || agentKind == "") {
+		// Not using terminal title as tab name
 		return false, nil
 	}
 	states := LoadTabStates(statePath)

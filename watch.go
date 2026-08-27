@@ -196,7 +196,7 @@ func classifyEvent(line []byte, st *classifyState, agentTitles, terminalTitles b
 	switch ev.Event {
 	case "pane_updated":
 		p := ev.Data.Pane
-		if p == nil || (!terminalTitles && (!agentTitles || p.Agent == "")) {
+		if p == nil || (!terminalTitles && (!agentTitles || (p.Agent == "" && p.Label == ""))) {
 			return nil
 		}
 		title := p.Label
