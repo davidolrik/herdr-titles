@@ -802,14 +802,7 @@ func filterExisting(paths []string) []string {
 }
 
 func joinComma(parts []string) string {
-	out := ""
-	for i, p := range parts {
-		if i > 0 {
-			out += ","
-		}
-		out += p
-	}
-	return out
+	return strings.Join(parts, ",")
 }
 
 // runWatchParent is what herdr's [[startup]] spawns: gate on environment and

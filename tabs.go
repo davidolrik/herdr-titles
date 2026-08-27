@@ -18,17 +18,13 @@ import (
 // is next selected). Without layout data (older herdr), a focused multi-pane
 // tab falls back to the globally focused pane and a background tab to none.
 func activePane(tab Tab, snap *Snapshot) string {
-	var tabPanes []Pane
-	for _, p := range snap.Panes {
-		if p.TabID == tab.TabID {
-			tabPanes = append(tabPanes, p)
-		}
-	}
-	if len(tabPanes) == 0 {
-		return ""
-	}
 	if tab.PaneCount == 1 {
-		return tabPanes[0].PaneID
+		for _, p := range snap.Panes {
+			if p.TabID == tab.TabID {
+				return p.PaneID
+			}
+		}
+		return ""
 	}
 	if paneID := snap.TabFocus[tab.TabID]; paneID != "" {
 		return paneID
@@ -39,7 +35,11 @@ func activePane(tab Tab, snap *Snapshot) string {
 				return p.PaneID
 			}
 		}
-		return tabPanes[0].PaneID
+		for _, p := range snap.Panes {
+			if p.TabID == tab.TabID {
+				return p.PaneID
+			}
+		}
 	}
 	return ""
 }

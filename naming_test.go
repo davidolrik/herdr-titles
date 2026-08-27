@@ -283,3 +283,50 @@ func TestFormatAgentTitle(t *testing.T) {
 		}
 	}
 }
+
+func BenchmarkTruncateRunes(b *testing.B) {
+	s := "This is a longer string that needs to be truncated to a specific number of runes"
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = truncateRunes(s, 20)
+	}
+}
+
+func BenchmarkCleanAgentTitle(b *testing.B) {
+	title := "✳ Fix concurrency issue in event loop - Working..."
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = cleanAgentTitle(title)
+	}
+}
+
+func BenchmarkPadIcons(b *testing.B) {
+	title := "\U000F06A9 AGY Support Task"
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = PadIcons(title)
+	}
+}
+
+func BenchmarkStripIcons(b *testing.B) {
+	title := "\U000F06A9  AGY Support Task"
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = StripIcons(title)
+	}
+}
+
+func BenchmarkIsDefaultLabel(b *testing.B) {
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = isDefaultLabel("\U000F06A9 agent")
+	}
+}
+
+func BenchmarkParseEnvNul(b *testing.B) {
+	envData := []byte("HOME=/home/user\x00PATH=/usr/bin:/bin\x00USER=test\x00SHELL=/bin/zsh\x00HERDR_SESSION=default\x00HERDR_TAB_ID=w1:t1\x00")
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = ParseEnvNul(envData)
+	}
+}

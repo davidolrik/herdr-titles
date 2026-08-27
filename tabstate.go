@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode/utf8"
 )
 
 // TabState records ownership of one tab's label.
@@ -65,9 +66,24 @@ func isDefaultLabel(label string) bool {
 		return true
 	}
 	clean := strings.TrimSpace(label)
-	for _, glyph := range builtinIcons {
-		clean = strings.TrimPrefix(clean, glyph)
-		clean = strings.TrimSpace(clean)
+	for len(clean) > 0 {
+		r, size := utf8.DecodeRuneInString(clean)
+		if isNerdFontRune(r) {
+			clean = strings.TrimSpace(clean[size:])
+			continue
+		}
+		// Also check if leading string is a known glyph in builtinIcons
+		stripped := false
+		for _, glyph := range builtinIcons {
+			if strings.HasPrefix(clean, glyph) {
+				clean = strings.TrimSpace(strings.TrimPrefix(clean, glyph))
+				stripped = true
+				break
+			}
+		}
+		if !stripped {
+			break
+		}
 	}
 	if idx := strings.Index(clean, " - "); idx != -1 {
 		clean = clean[:idx]

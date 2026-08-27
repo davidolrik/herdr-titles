@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -12,7 +14,7 @@ import (
 var pbtxtTitleRegex = regexp.MustCompile(`title:\s*["']?([^"'\r\n]+)["']?`)
 
 // isGenericAgentTitle reports whether a title is just the command line invocation
-// (e.g. "agy --continue", "agent", "cursor") rather than an actual conversation title.
+// (e.g. "agy --continue", "agent", "cursor", "agy -c") rather than an actual conversation title.
 func isGenericAgentTitle(title string) bool {
 	clean := strings.TrimSpace(strings.ToLower(title))
 	switch clean {
@@ -23,7 +25,9 @@ func isGenericAgentTitle(title string) bool {
 		"cursor", "cursor-agent", "cursor-cli":
 		return true
 	}
-	if strings.HasPrefix(clean, "agy ") || strings.HasPrefix(clean, "agent ") || strings.HasPrefix(clean, "cursor ") {
+	if strings.HasPrefix(clean, "agy -") || strings.HasPrefix(clean, "antigravity -") ||
+		strings.HasPrefix(clean, "agent -") || strings.HasPrefix(clean, "cursor -") ||
+		strings.HasPrefix(clean, "cursor /") || strings.HasPrefix(clean, "cursor .") {
 		return true
 	}
 	return false
@@ -31,16 +35,16 @@ func isGenericAgentTitle(title string) bool {
 
 // readAntigravityTitle searches for the active Antigravity session title for cwd.
 func readAntigravityTitle(cwd string) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
 	root := os.Getenv("ANTIGRAVITY_DATA_DIR")
 	if root == "" {
 		root = os.Getenv("ANTIGRAVITY_HOME")
 	}
 	if root == "" {
-		root = filepath.Join(home, ".gemini", "antigravity-cli")
+		if home, err := os.UserHomeDir(); err == nil {
+			root = filepath.Join(home, ".gemini", "antigravity-cli")
+		} else {
+			return ""
+		}
 	}
 
 	normCwd := filepath.Clean(cwd)
@@ -66,13 +70,9 @@ func readAntigravityTitle(cwd string) string {
 			}
 		}
 		// Sort newest first
-		for i := 0; i < len(list); i++ {
-			for j := i + 1; j < len(list); j++ {
-				if list[j].modTime.After(list[i].modTime) {
-					list[i], list[j] = list[j], list[i]
-				}
-			}
-		}
+		slices.SortFunc(list, func(a, b annotated) int {
+			return b.modTime.Compare(a.modTime)
+		})
 
 		// First try to match by conversation's working directory if known
 		for _, item := range list {
@@ -108,23 +108,35 @@ func parsePbtxtTitle(path string) string {
 
 func matchesAntigravityCwd(root, convID, normCwd string) bool {
 	transcriptPath := filepath.Join(root, "brain", convID, ".system_generated", "logs", "transcript.jsonl")
-	data, err := os.ReadFile(transcriptPath)
+	f, err := os.Open(transcriptPath)
 	if err != nil {
 		return false
 	}
-	// Cheap check: look for normCwd within transcript bytes
-	return strings.Contains(string(data), normCwd)
+	defer f.Close()
+
+	target := []byte(normCwd)
+	buf := make([]byte, 64*1024)
+	for {
+		n, err := f.Read(buf)
+		if n > 0 && bytes.Contains(buf[:n], target) {
+			return true
+		}
+		if err != nil {
+			break
+		}
+	}
+	return false
 }
 
 // readCursorTitle searches for the active Cursor session title for cwd.
 func readCursorTitle(cwd string) string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
 	root := os.Getenv("CURSOR_CONFIG_DIR")
 	if root == "" {
-		root = filepath.Join(home, ".cursor")
+		if home, err := os.UserHomeDir(); err == nil {
+			root = filepath.Join(home, ".cursor")
+		} else {
+			return ""
+		}
 	}
 	chatsDir := filepath.Join(root, "chats")
 

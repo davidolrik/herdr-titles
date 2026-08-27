@@ -67,9 +67,15 @@ func applySubstitutions(s string, subs []Substitution) string {
 }
 
 func truncateRunes(s string, max int) string {
-	runes := []rune(s)
-	if len(runes) > max {
-		return string(runes[:max])
+	if max <= 0 {
+		return ""
+	}
+	count := 0
+	for i := range s {
+		if count == max {
+			return s[:i]
+		}
+		count++
 	}
 	return s
 }
@@ -188,8 +194,15 @@ var (
 
 func cleanAgentTitle(title string) string {
 	title = strings.TrimSpace(title)
-	title = agentPrefixRegex.ReplaceAllString(title, "")
-	title = agentSuffixRegex.ReplaceAllString(title, "")
+	if title == "" {
+		return ""
+	}
+	if agentPrefixRegex.MatchString(title) {
+		title = agentPrefixRegex.ReplaceAllString(title, "")
+	}
+	if agentSuffixRegex.MatchString(title) {
+		title = agentSuffixRegex.ReplaceAllString(title, "")
+	}
 	return strings.TrimSpace(title)
 }
 

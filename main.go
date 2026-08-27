@@ -89,13 +89,11 @@ func pass(event string, withTabs, bypassEnvCache bool) error {
 	}
 	// The harvested shell environment wins; the process env fills in what only
 	// the plugin engine knows (HERDR_* variables).
-	env := map[string]string{}
-	for _, entry := range os.Environ() {
-		for i := 0; i < len(entry); i++ {
-			if entry[i] == '=' {
-				env[entry[:i]] = entry[i+1:]
-				break
-			}
+	environ := os.Environ()
+	env := make(map[string]string, len(environ)+len(harvested))
+	for _, entry := range environ {
+		if k, v, ok := strings.Cut(entry, "="); ok {
+			env[k] = v
 		}
 	}
 	for k, v := range harvested {

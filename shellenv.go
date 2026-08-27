@@ -19,7 +19,15 @@ const shellTimeout = 15 * time.Second
 // Values may contain newlines; entries without an equals sign are skipped.
 func ParseEnvNul(data []byte) map[string]string {
 	env := map[string]string{}
-	for _, entry := range bytes.Split(data, []byte{0}) {
+	for len(data) > 0 {
+		var entry []byte
+		if idx := bytes.IndexByte(data, 0); idx >= 0 {
+			entry = data[:idx]
+			data = data[idx+1:]
+		} else {
+			entry = data
+			data = nil
+		}
 		if len(entry) == 0 {
 			continue
 		}
