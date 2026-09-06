@@ -407,6 +407,14 @@ func TestInitZshPreexecPublishesProgramTitle(t *testing.T) {
 	if got := run("/usr/bin/env"); got != "\x1b]2;env\a" {
 		t.Errorf("absolute path: title write = %q, want basename env", got)
 	}
+	// A privilege wrapper's own name says nothing about what is running: the
+	// hook publishes the WHOLE command line and the engine names the wrapped
+	// command from it (FormatTerminalTitle).
+	if _, err := exec.LookPath("sudo"); err == nil {
+		if got := run("sudo env FOO=1"); got != "\x1b]2;sudo env FOO=1\a" {
+			t.Errorf("sudo: title write = %q, want full command line", got)
+		}
+	}
 	if got := run("cd /tmp"); got != "" {
 		t.Errorf("builtin cd: title write = %q, want nothing (cwd title stands)", got)
 	}

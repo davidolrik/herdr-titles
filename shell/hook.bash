@@ -38,10 +38,17 @@ if [[ -n ${HERDR_PANE_ID:-} && -x $_hwt_bin && -z ${_hwt_installed:-} ]]; then
   # flashes the shell name; a program that sets its own title (nvim) simply
   # overrides this a moment later. HERDR_TITLES_NO_TITLE=1 disables it.
   _hwt_preexec() {
-    local word="${1%% *}" kind
+    local word="${1%% *}" kind title
     kind=$(type -t -- "$word" 2>/dev/null)
     if [ "$kind" = "file" ]; then
-      [[ -z ${HERDR_TITLES_NO_TITLE:-} ]] && printf '\e]2;%s\a' "${word##*/}" > "${HERDR_TITLES_TTY:-/dev/tty}" 2>/dev/null
+      if [[ -z ${HERDR_TITLES_NO_TITLE:-} ]]; then
+        # A privilege wrapper's name says nothing about what is running:
+        # publish the whole command line (flattened — OSC 2 is one line)
+        # and let the engine name the wrapped command from it.
+        title="${word##*/}"
+        case "$title" in sudo|doas) title="${1//$'\n'/ }" ;; esac
+        printf '\e]2;%s\a' "$title" > "${HERDR_TITLES_TTY:-/dev/tty}" 2>/dev/null
+      fi
       ("$_hwt_bin" preexec "$1"       >/dev/null 2>&1 &)
     else
       ("$_hwt_bin" preexec "$1" shell >/dev/null 2>&1 &)

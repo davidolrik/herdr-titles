@@ -32,7 +32,14 @@ if test -n "$HERDR_PANE_ID"; and test -x "$_hwt_bin"
         set -l kind (type --type -- $word 2>/dev/null)
         if test "$kind" = file
             if test -z "$HERDR_TITLES_NO_TITLE"
-                printf '\e]2;%s\a' (basename -- $word) > /dev/tty 2>/dev/null
+                # A privilege wrapper's name says nothing about what is
+                # running: publish the whole command line (flattened — OSC 2
+                # is one line) and let the engine name the wrapped command.
+                set -l title (basename -- $word)
+                if contains -- $title sudo doas
+                    set title (string replace -a \n ' ' -- $argv[1])
+                end
+                printf '\e]2;%s\a' $title > /dev/tty 2>/dev/null
             end
             command "$_hwt_bin" preexec "$argv[1]" >/dev/null 2>&1 &
         else

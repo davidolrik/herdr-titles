@@ -44,7 +44,7 @@ if [[ -n ${HERDR_PANE_ID:-} && -x $_hwt_bin ]]; then
   # (nvim) simply overrides this a moment later. Harmless when terminal
   # titles are off. HERDR_TITLES_NO_TITLE=1 disables it like the prompt title.
   _hwt_preexec() {
-    local line="${2:-$1}" kind word
+    local line="${2:-$1}" kind word title
     # Split into an explicit array: a single-word line makes ${(z)line}
     # collapse to a scalar, and [1] would then take its first CHARACTER.
     local -a words; words=("${(z)line}")
@@ -52,7 +52,14 @@ if [[ -n ${HERDR_PANE_ID:-} && -x $_hwt_bin ]]; then
     kind=$(builtin whence -w -- "$word" 2>/dev/null)
     case "${kind##*: }" in
       command|hashed)
-        [[ -z ${HERDR_TITLES_NO_TITLE:-} ]] && print -n "\e]2;${word:t}\a" > "${HERDR_TITLES_TTY:-/dev/tty}" 2>/dev/null
+        if [[ -z ${HERDR_TITLES_NO_TITLE:-} ]]; then
+          # A privilege wrapper's name says nothing about what is running:
+          # publish the whole command line (flattened — OSC 2 is one line)
+          # and let the engine name the wrapped command from it.
+          title="${word:t}"
+          case "$title" in sudo|doas) title="${line//$'\n'/ }" ;; esac
+          print -n "\e]2;${title}\a" > "${HERDR_TITLES_TTY:-/dev/tty}" 2>/dev/null
+        fi
         ("$_hwt_bin" preexec "$line"       >/dev/null 2>&1 &) ;;
       *)              ("$_hwt_bin" preexec "$line" shell >/dev/null 2>&1 &) ;;
     esac

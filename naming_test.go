@@ -227,6 +227,122 @@ func TestTitleTabName(t *testing.T) {
 	}
 }
 
+func TestUnwrapPrivilege(t *testing.T) {
+	cases := []struct {
+		name   string
+		prog   string
+		fields []string
+		want   string
+		ok     bool
+	}{
+		{"plain command", "sudo", []string{"sudo", "systemctl", "restart", "nginx"}, "systemctl", true},
+		{"value flag consumes next word", "sudo", []string{"sudo", "-u", "admin", "psql"}, "psql", true},
+		{"bare flag skipped", "sudo", []string{"sudo", "-E", "env"}, "env", true},
+		{"long flag with attached value", "sudo", []string{"sudo", "--preserve-env=PATH", "env"}, "env", true},
+		{"double dash ends options", "sudo", []string{"sudo", "--", "-weird"}, "-weird", true},
+		{"env assignment skipped", "sudo", []string{"sudo", "FOO=1", "env"}, "env", true},
+		{"path stripped", "sudo", []string{"sudo", "/usr/sbin/nginx", "-t"}, "nginx", true},
+		{"interpreter unwrapped too", "sudo", []string{"sudo", "python3", "/v/bin/certbot", "renew"}, "certbot", true},
+		{"no command", "sudo", nil, "", false},
+		{"only wrapper word", "sudo", []string{"sudo"}, "", false},
+		{"login shell has no command", "sudo", []string{"sudo", "-i"}, "", false},
+		{"trailing value flag has no command", "sudo", []string{"sudo", "-u", "admin"}, "", false},
+		{"doas", "doas", []string{"doas", "-u", "root", "reboot"}, "reboot", true},
+		{"non-wrapper passthrough", "nvim", []string{"nvim", "main.go"}, "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := unwrapPrivilege(tc.prog, tc.fields)
+			if got != tc.want || ok != tc.ok {
+				t.Errorf("unwrapPrivilege(%q, %v) = %q, %v; want %q, %v", tc.prog, tc.fields, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+// A command run under sudo/doas is named after the WRAPPED program — the
+// wrapper alone says nothing about what the tab is doing. The wrapper stays
+// visible: as its glyph next to the program's own when icons are shown
+// ("shield gear systemctl"), as its word otherwise ("sudo systemctl").
+func TestFormatTabNamePrivilegeWrapper(t *testing.T) {
+	cfg := namingConfig()
+	cases := []struct{ name, prog, cmdline, want string }{
+		{"wrapped command shown", "sudo", "sudo systemctl restart nginx", "sudo systemctl"},
+		{"wrapper flags skipped", "sudo", "sudo -u admin systemctl daemon-reload", "sudo systemctl"},
+		{"quick tools not swallowed by ignore list", "sudo", "sudo rm -rf /tmp/x", "sudo rm"},
+		{"bare wrapper keeps shell", "sudo", "sudo -i", "zsh"},
+		{"doas wrapped command", "doas", "doas -u root reboot", "doas reboot"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := FormatTabName(tc.prog, tc.cmdline, cfg); got != tc.want {
+				t.Errorf("FormatTabName(%q, %q) = %q, want %q", tc.prog, tc.cmdline, got, tc.want)
+			}
+		})
+	}
+
+	// An alias for the wrapper itself is a user rename and wins outright.
+	cfg.Aliases = map[string]string{"sudo": "admin"}
+	if got := FormatTabName("sudo", "sudo systemctl restart nginx", cfg); got != "admin" {
+		t.Errorf("aliased wrapper = %q, want admin", got)
+	}
+	// An alias for the wrapped program names it, wrapper prefix kept.
+	cfg.Aliases = map[string]string{"systemctl": "sysd"}
+	if got := FormatTabName("sudo", "sudo systemctl restart nginx", cfg); got != "sudo sysd" {
+		t.Errorf("aliased wrapped program = %q, want %q", got, "sudo sysd")
+	}
+	cfg.Aliases = map[string]string{}
+
+	// Icons: the wrapper's glyph replaces its word, and the wrapped program
+	// is rendered exactly as it would be on its own (fallback rules included).
+	cfg.Icons.Enabled = true
+	if got := FormatTabName("sudo", "sudo systemctl restart nginx", cfg); got != "\uF132 \uF085 systemctl" {
+		t.Errorf("name_and_icon = %q, want %q", got, "\uF132 \uF085 systemctl")
+	}
+	if got := FormatTabName("doas", "doas -u root systemctl", cfg); got != "\uF132 \uF085 systemctl" {
+		t.Errorf("doas name_and_icon = %q, want %q", got, "\uF132 \uF085 systemctl")
+	}
+	if got := FormatTabName("sudo", "sudo rg -n foo", cfg); got != "\uF132 ? rg" {
+		t.Errorf("unknown wrapped program = %q, want %q", got, "\uF132 ? rg")
+	}
+	cfg.Icons.Style = "icon"
+	if got := FormatTabName("sudo", "sudo systemctl restart nginx", cfg); got != "\uF132 \uF085" {
+		t.Errorf("style=icon = %q, want two glyphs", got)
+	}
+	if got := FormatTabName("sudo", "sudo rg -n foo", cfg); got != "\uF132 rg" {
+		t.Errorf("style=icon fallback = %q, want shield + plain name", got)
+	}
+	cfg.Icons.Style = "name"
+	if got := FormatTabName("sudo", "sudo systemctl restart nginx", cfg); got != "sudo systemctl" {
+		t.Errorf("style=name = %q, want %q", got, "sudo systemctl")
+	}
+}
+
+// The shell integration publishes the FULL command line as the pane title for
+// a privilege wrapper (a bare "sudo" title names nothing), and the title path
+// renders it exactly like the process path would — the daemon and the hook
+// must never disagree on a titled pane.
+func TestFormatTerminalTitlePrivilegeWrapper(t *testing.T) {
+	cfg := namingConfig()
+	if got := FormatTerminalTitle("sudo systemctl restart nginx", cfg); got != "sudo systemctl" {
+		t.Errorf("icons off = %q, want %q", got, "sudo systemctl")
+	}
+	cfg.Icons.Enabled = true
+	if got := FormatTerminalTitle("sudo systemctl restart nginx", cfg); got != "\uF132 \uF085 systemctl" {
+		t.Errorf("name_and_icon = %q, want %q", got, "\uF132 \uF085 systemctl")
+	}
+	// A bare "sudo" title (no command line to unwrap) still icons as an
+	// exact-program-name title, as before.
+	if got := FormatTerminalTitle("sudo", cfg); got != "\uF132 sudo" {
+		t.Errorf("bare sudo title = %q, want %q", got, "\uF132 sudo")
+	}
+	// Free text whose first word merely resembles nothing wrapper-like is
+	// untouched.
+	if got := FormatTerminalTitle("make -j all", cfg); got != "make -j all" {
+		t.Errorf("free text = %q, want unchanged", got)
+	}
+}
+
 func TestUnwrapInterpreter(t *testing.T) {
 	cases := []struct {
 		name string

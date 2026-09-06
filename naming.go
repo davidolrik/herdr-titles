@@ -132,9 +132,86 @@ func unwrapInterpreter(prog string, argv []string) string {
 	return prog
 }
 
+// privilegeWrapperValueFlags names the privilege wrappers a tab should see
+// through (the wrapper alone says nothing about what the tab is doing) and,
+// per wrapper, the flags that consume the following word — every other
+// "-..." word skips on its own, and `--long=value` is self-contained.
+var privilegeWrapperValueFlags = map[string]map[string]bool{
+	"sudo": {"-u": true, "-g": true, "-p": true, "-h": true, "-C": true, "-D": true,
+		"-R": true, "-T": true, "-U": true, "-r": true, "-t": true},
+	"doas": {"-a": true, "-C": true, "-u": true},
+}
+
+func baseName(s string) string {
+	if i := strings.LastIndex(s, "/"); i >= 0 {
+		return s[i+1:]
+	}
+	return s
+}
+
+// unwrapPrivilege resolves the command sudo/doas is actually running from the
+// command-line words: wrapper flags are skipped (value flags take the next
+// word with them), env assignments (sudo VAR=x cmd) too, and `--` ends option
+// parsing. The result is basenamed and interpreter-unwrapped, so
+// `sudo python3 /v/bin/certbot renew` names certbot. ok=false when prog is
+// not a wrapper or no command word remains (`sudo -i`).
+func unwrapPrivilege(prog string, fields []string) (string, bool) {
+	valueFlags, isWrapper := privilegeWrapperValueFlags[prog]
+	if !isWrapper || len(fields) < 2 {
+		return "", false
+	}
+	i := 1
+scan:
+	for i < len(fields) {
+		switch f := fields[i]; {
+		case f == "--":
+			i++
+			break scan
+		case strings.HasPrefix(f, "-"):
+			if valueFlags[f] {
+				i += 2
+			} else {
+				i++
+			}
+		case strings.Contains(f, "="):
+			i++
+		default:
+			break scan
+		}
+	}
+	if i >= len(fields) {
+		return "", false
+	}
+	return unwrapInterpreter(baseName(fields[i]), fields[i:]), true
+}
+
+// formatPrivilegeWrapped renders a command run under sudo/doas: the wrapped
+// program's own label (alias, else substitutions; glyph rules included) with
+// the wrapper in front — as its glyph when icons are shown, as its word
+// otherwise. The ignore/shell lists deliberately don't apply: an elevated
+// command is worth naming even when its program alone would not be.
+func formatPrivilegeWrapped(wrapper, prog string, cfg *TabsConfig) string {
+	name, aliased := cfg.Aliases[prog]
+	if !aliased {
+		name = applySubstitutions(prog, cfg.Substitutions)
+	}
+	if cfg.Icons.Enabled && cfg.Icons.Style != "name" {
+		return programIcon(wrapper, &cfg.Icons) + " " + applyIcon(prog, name, &cfg.Icons)
+	}
+	return wrapper + " " + name
+}
+
 // FormatTabName computes the tab label for a foreground program. An empty
 // program means a bare prompt (name by the shell).
 func FormatTabName(program, cmdline string, cfg *TabsConfig) string {
+	// A privilege wrapper is named after the command it runs; an alias for
+	// the wrapper itself is a user rename and still wins. A wrapper with no
+	// command to show (`sudo -i`) falls through to the ordinary rules.
+	if _, aliased := cfg.Aliases[program]; !aliased {
+		if prog, ok := unwrapPrivilege(program, strings.Fields(cmdline)); ok {
+			return truncateRunes(formatPrivilegeWrapped(program, prog, cfg), cfg.MaxNameLen)
+		}
+	}
 	var name string
 	isShell := false
 	alias, aliased := cfg.Aliases[program]
@@ -195,6 +272,17 @@ func FormatAgentTitle(agentKind, title string, cfg *TabsConfig) string {
 // FormatTerminalTitle names a tab after its pane's terminal title.
 // No icon is added since the program is unknown.
 func FormatTerminalTitle(title string, cfg *TabsConfig) string {
+	// The shell integration publishes the FULL command line as the title for
+	// a privilege wrapper (see shell/hook.*) — a bare "sudo" title names
+	// nothing. Render it exactly as the process path would, so the daemon and
+	// the hook never disagree on a titled pane; unlike free text, this title
+	// is known to be a command, so the fallback-glyph rules apply.
+	if fields := strings.Fields(title); len(fields) > 1 {
+		w := baseName(fields[0])
+		if prog, ok := unwrapPrivilege(w, fields); ok {
+			return truncateRunes(formatPrivilegeWrapped(w, prog, cfg), cfg.MaxNameLen)
+		}
+	}
 	name := applySubstitutions(title, cfg.Substitutions)
 	// A title that is exactly a known program name — what the shell
 	// integration publishes when a command starts — gets that program's

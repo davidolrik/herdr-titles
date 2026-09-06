@@ -98,6 +98,8 @@ tabs {
   ]
 
   # Quick commands that keep showing the shell instead of taking over the tab.
+  # sudo/doas here only cover the no-command forms (`sudo -i`); with a command
+  # the tab names the wrapped program instead, shield glyph in front.
   ignored_programs = [
     "ls", "eza", "ll", "la", "cd", "z", "zoxide", "cat", "bat", "less", "more",
     "echo", "pwd", "clear", "which", "man", "head", "tail", "wc", "cp", "mv",

@@ -113,7 +113,7 @@ func init() {
 		{"\uEBC8", []string{"screen", "tmux"}},                                  // U+EBC8
 		{"\uF1C0", []string{"sqlite"}},                                          // U+F1C0
 		{"\uE7AA", []string{"sublime_text"}},                                    // U+E7AA
-		{"\uF132", []string{"sudo"}},                                            // U+F132
+		{"\uF132", []string{"doas", "sudo"}},                                    // U+F132
 		{"\uE755", []string{"swift"}},                                           // U+E755
 		{"\uF085", []string{"systemctl"}},                                       // U+F085
 		{"\U000F1062", []string{"terraform"}},                                   // U+F1062 nf-md-terraform

@@ -25,6 +25,10 @@ mysession : Work @ HQ › myproject › 1 › ×2 ✓1
   window title on macOS, whose title bar can't render them
   (`titlebar_icons`). Script interpreters are unwrapped to the tool they
   run — `ansible-playbook` shows as `ansible-playbook`, not `python`.
+  So are `sudo` and `doas`: the tab names the wrapped command with the
+  wrapper kept visible — its shield glyph next to the command's own icon
+  when icons are on (`  systemctl`), its name otherwise
+  (`sudo systemctl`).
   Ported from
   [qu8n/herdr-automatic-rename](https://github.com/qu8n/herdr-automatic-rename)
   (MIT), minus the jump-key numbering.
