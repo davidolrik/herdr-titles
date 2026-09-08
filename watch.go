@@ -78,9 +78,9 @@ type watchTimings struct {
 
 func defaultWatchTimings() watchTimings {
 	return watchTimings{
-		Debounce:     250 * time.Millisecond,
-		FullFloor:    2 * time.Second,
-		StatInterval: 5 * time.Second,
+		Debounce:     100 * time.Millisecond,
+		FullFloor:    500 * time.Millisecond,
+		StatInterval: 1 * time.Second,
 		ReadDeadline: 10 * time.Minute,
 		BinaryPoll:   15 * time.Second,
 	}
@@ -177,6 +177,7 @@ func classifyEvent(line []byte, st *classifyState, agentTitles, terminalTitles b
 				PaneID  string `json:"pane_id"`
 				TabID   string `json:"tab_id"`
 				Agent   string `json:"agent"`
+				Label   string `json:"label"`
 				Focused bool   `json:"focused"`
 				Title   string `json:"terminal_title_stripped"`
 			} `json:"pane"`
@@ -195,20 +196,24 @@ func classifyEvent(line []byte, st *classifyState, agentTitles, terminalTitles b
 	switch ev.Event {
 	case "pane_updated":
 		p := ev.Data.Pane
-		if p == nil || (!terminalTitles && (!agentTitles || p.Agent == "")) {
+		if p == nil || (!terminalTitles && (!agentTitles || (p.Agent == "" && p.Label == ""))) {
 			return nil
+		}
+		title := p.Title
+		if title == "" {
+			title = p.Label
 		}
 		st.paneTab[p.PaneID] = p.TabID
-		if st.lastTitles[p.PaneID] == p.Title {
+		if st.lastTitles[p.PaneID] == title {
 			return nil
 		}
-		st.lastTitles[p.PaneID] = p.Title
+		st.lastTitles[p.PaneID] = title
 		focus := st.tabFocus[p.TabID]
 		if focus != "" && focus != p.PaneID {
 			return nil // not the pane the tab is named after
 		}
 		return &trigger{kind: triggerRename, pane: paneEvent{
-			PaneID: p.PaneID, TabID: p.TabID, Agent: p.Agent, Title: p.Title,
+			PaneID: p.PaneID, TabID: p.TabID, Agent: p.Agent, Title: title,
 			FocusKnown: focus == p.PaneID,
 		}}
 	case "pane_focused":
@@ -750,8 +755,12 @@ func statWatcher(files []string, interval time.Duration, triggers chan<- trigger
 				}
 				if mt := info.ModTime(); mt != seen[f] {
 					seen[f] = mt
+					kind := triggerEnv
+					if info.IsDir() {
+						kind = triggerFull
+					}
 					select {
-					case triggers <- trigger{kind: triggerEnv}:
+					case triggers <- trigger{kind: kind}:
 					default:
 					}
 				}
@@ -765,15 +774,35 @@ func isTimeout(err error) bool {
 	return ok && ne.Timeout()
 }
 
-func joinComma(parts []string) string {
-	out := ""
-	for i, p := range parts {
-		if i > 0 {
-			out += ","
+// defaultWatchedPaths returns the default paths watched by the title daemon
+func defaultWatchedPaths(cfgPaths []string) []string {
+	out := append([]string{}, cfgPaths...)
+	if home, err := os.UserHomeDir(); err == nil {
+		antigravityDir := filepath.Join(home, ".gemini", "antigravity-cli", "annotations")
+		if _, err := os.Stat(antigravityDir); err == nil {
+			out = append(out, antigravityDir)
 		}
-		out += p
+		cursorChatsDir := filepath.Join(home, ".cursor", "chats")
+		if _, err := os.Stat(cursorChatsDir); err == nil {
+			out = append(out, cursorChatsDir)
+		}
 	}
 	return out
+}
+
+// filterExisting filters paths to those that exist right now.
+func filterExisting(paths []string) []string {
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func joinComma(parts []string) string {
+	return strings.Join(parts, ",")
 }
 
 // runWatchParent is what herdr's [[startup]] spawns: gate on environment and
@@ -850,7 +879,7 @@ func runWatchDetached() error {
 			return retryFull
 		},
 	}
-	return watchDaemonAt(sockPath, stateDir, session, exePath, cfg.Tabs.AgentTitles, cfg.Tabs.TerminalTitles, cfg.EnvWatchFiles, ops, defaultWatchTimings())
+	return watchDaemonAt(sockPath, stateDir, session, exePath, cfg.Tabs.AgentTitles, cfg.Tabs.TerminalTitles, defaultWatchedPaths(cfg.EnvWatchFiles), ops, defaultWatchTimings())
 }
 
 // daemonAlive probes the daemon's liveness lock: if we can take it, nobody

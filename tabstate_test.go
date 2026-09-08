@@ -31,6 +31,8 @@ func TestTabStatesEligible(t *testing.T) {
 		{name: "opted out re-adopts on single space", initial: TabStates{"t": {Enabled: false}}, label: " ", computed: "nvim", want: true},
 		{name: "opted out re-adopts on several spaces", initial: TabStates{"t": {Enabled: false}}, label: "   ", computed: "nvim", want: true},
 		{name: "first sight whitespace label adopts", initial: TabStates{}, label: "  ", computed: "nvim", want: true},
+		{name: "first sight default agent label adopts", initial: TabStates{}, label: "agent", computed: "Adopt SDK Plan", want: true},
+		{name: "first sight default agy label adopts", initial: TabStates{}, label: "agy", computed: "AGY support", want: true},
 		{name: "owned label matching auto stays eligible", initial: TabStates{"t": {Auto: "nvim", Enabled: true}}, label: "nvim", computed: "nvim", want: true},
 		{name: "owned cleared label re-adopts", initial: TabStates{"t": {Auto: "nvim", Enabled: true}}, label: "", computed: "nvim", want: true},
 		{name: "owned hide-shell tab placeholder ok", initial: TabStates{"t": {Auto: "", Enabled: true}}, label: "7", computed: "", want: true},

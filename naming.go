@@ -67,9 +67,15 @@ func applySubstitutions(s string, subs []Substitution) string {
 }
 
 func truncateRunes(s string, max int) string {
-	runes := []rune(s)
-	if len(runes) > max {
-		return string(runes[:max])
+	if max <= 0 {
+		return ""
+	}
+	count := 0
+	for i := range s {
+		if count == max {
+			return s[:i]
+		}
+		count++
 	}
 	return s
 }
@@ -258,11 +264,33 @@ func FormatTabName(program, cmdline string, cfg *TabsConfig) string {
 	return truncateRunes(name, cfg.MaxNameLen)
 }
 
+var (
+	agentPrefixRegex = regexp.MustCompile(`^(?:[✳✢·…]\s*|OC\s*\|\s*)`)
+	agentSuffixRegex = regexp.MustCompile(`\s*-\s*(?:[✅⏳✓⌛×·]|Ready|Working|Blocked|\.\.\.).*$`)
+)
+
+func cleanAgentTitle(title string) string {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return ""
+	}
+	if agentPrefixRegex.MatchString(title) {
+		title = agentPrefixRegex.ReplaceAllString(title, "")
+	}
+	if agentSuffixRegex.MatchString(title) {
+		title = agentSuffixRegex.ReplaceAllString(title, "")
+	}
+	return strings.TrimSpace(title)
+}
+
 // FormatAgentTitle names a tab after an agent's session title (herdr's
 // terminal_title_stripped) instead of the agent's program name. The icon
 // still identifies the agent kind; titles get their own, longer limit.
 func FormatAgentTitle(agentKind, title string, cfg *TabsConfig) string {
-	name := title
+	name := cleanAgentTitle(title)
+	if name == "" {
+		name = title
+	}
 	if cfg.Icons.Enabled {
 		name = applyIcon(agentKind, name, &cfg.Icons)
 	}
@@ -333,8 +361,8 @@ func DefaultTabsConfig() *TabsConfig {
 		Shells:          []string{"zsh", "bash", "sh", "fish", "dash", "ksh"},
 		NameOnlyPrograms: []string{
 			"nvim", "vim", "vi", "view", "gvim", "git", "lazygit", "gitui", "lazydocker",
-			"claude", "codex", "aider", "pi", "gemini", "cursor", "cursor-agent", "devin",
-			"agy", "antigravity", "cline", "omp", "mastracode", "opencode", "copilot",
+			"claude", "codex", "aider", "pi", "gemini", "agent", "cursor", "cursor-agent", "cursor-cli", "devin",
+			"agy", "antigravity", "antigravity-cli", "cline", "omp", "mastracode", "opencode", "copilot",
 			"kimi", "kiro", "kiro-cli", "droid", "amp", "grok", "hermes", "kilo", "qodercli",
 		},
 		IgnoredPrograms: []string{
@@ -354,4 +382,15 @@ func DefaultTabsConfig() *TabsConfig {
 			Map:      map[string]string{},
 		},
 	}
+}
+
+// isAgentProgram reports whether a program binary is a known AI agent.
+func isAgentProgram(prog string) bool {
+	switch strings.ToLower(prog) {
+	case "agent", "agy", "antigravity", "antigravity-cli", "cursor", "cursor-agent", "cursor-cli",
+		"claude", "codex", "gemini", "opencode", "kimi", "devin", "aider", "cline", "omp",
+		"mastracode", "copilot", "kiro", "kiro-cli", "droid", "amp", "grok", "hermes", "kilo", "qodercli":
+		return true
+	}
+	return false
 }

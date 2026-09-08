@@ -53,15 +53,32 @@ func RenderAttention(agents []Agent, cfg *Config, focusedWorkspaceID string) str
 	return strings.Join(parts, " ")
 }
 
+// isNerdFontRune reports whether r is in the Unicode Private Use Areas commonly
+// used for Nerd Font glyphs.
+func isNerdFontRune(r rune) bool {
+	return (r >= 0xE000 && r <= 0xF8FF) || (r >= 0xF0000 && r <= 0xFFFFD) || (r >= 0x100000 && r <= 0x10FFFD)
+}
+
 // PadIcons inserts an extra space after every private-use-area rune (nerd-font
 // icons). Terminal sidebars render these glyphs in a patched monospace font,
 // but the window title bar uses the system font, where they overflow their
 // cell and smush into the following character.
 func PadIcons(s string) string {
+	hasIcon := false
+	for _, r := range s {
+		if isNerdFontRune(r) {
+			hasIcon = true
+			break
+		}
+	}
+	if !hasIcon {
+		return s
+	}
 	var b strings.Builder
+	b.Grow(len(s) + 4)
 	for _, r := range s {
 		b.WriteRune(r)
-		if (r >= 0xE000 && r <= 0xF8FF) || (r >= 0xF0000 && r <= 0xFFFFD) || (r >= 0x100000 && r <= 0x10FFFD) {
+		if isNerdFontRune(r) {
 			b.WriteRune(' ')
 		}
 	}
@@ -74,10 +91,21 @@ func PadIcons(s string) string {
 // the window title drops them while the tab bar (rendered in the terminal's
 // own font) keeps them. Emoji are ordinary Unicode and stay.
 func StripIcons(s string) string {
+	hasIcon := false
+	for _, r := range s {
+		if isNerdFontRune(r) {
+			hasIcon = true
+			break
+		}
+	}
+	if !hasIcon {
+		return strings.TrimSpace(s)
+	}
 	var b strings.Builder
+	b.Grow(len(s))
 	skipSpaces := false
 	for _, r := range s {
-		if (r >= 0xE000 && r <= 0xF8FF) || (r >= 0xF0000 && r <= 0xFFFFD) || (r >= 0x100000 && r <= 0x10FFFD) {
+		if isNerdFontRune(r) {
 			skipSpaces = true
 			continue
 		}

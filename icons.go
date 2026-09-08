@@ -21,8 +21,8 @@ func init() {
 		{"\uE73C", []string{"Python", "ipython", "ipython3", "pip", "pip3", "python", "python3"}}, // U+E73C
 		{"\U000F07D4", []string{"R"}},                                           // U+F07D4 nf-md-language_r
 		{"\U000F06A9", []string{"aider", "claude", "codex", "pi", "gemini"}},    // U+F06A9
-		{"\U000F06A9", []string{"cursor", "cursor-agent", "devin", "cline"}},    // U+F06A9
-		{"\U000F06A9", []string{"agy", "antigravity", "omp", "mastracode"}},     // U+F06A9
+		{"\U000F06A9", []string{"agent", "cursor", "cursor-agent", "cursor-cli", "devin", "cline"}}, // U+F06A9
+		{"\U000F06A9", []string{"agy", "antigravity", "antigravity-cli", "omp", "mastracode"}},      // U+F06A9
 		{"\U000F06A9", []string{"opencode", "copilot", "kimi", "droid", "amp"}}, // U+F06A9
 		{"\U000F06A9", []string{"kiro", "kiro-cli", "grok", "hermes", "kilo"}},  // U+F06A9
 		{"\U000F06A9", []string{"qodercli"}},                                    // U+F06A9

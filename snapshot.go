@@ -12,6 +12,7 @@ type Agent struct {
 	PaneID      string
 	Kind        string // herdr's detected agent kind, e.g. "claude"
 	Title       string // terminal_title_stripped: the agent's session title
+	CWD         string
 }
 
 // Tab is the slice of a herdr tab the plugin cares about.
@@ -30,6 +31,7 @@ type Pane struct {
 	Agent   string // detected agent kind, "" for a plain pane
 	Focused bool
 	Title   string // terminal_title_stripped: the pane's terminal title
+	CWD     string
 }
 
 // Snapshot is the slice of `herdr api snapshot` the plugin cares about.
@@ -65,15 +67,21 @@ func decodeSnapshot(data []byte) (*Snapshot, error) {
 				PaneID        string `json:"pane_id"`
 				TabID         string `json:"tab_id"`
 				Agent         string `json:"agent"`
+				Label         string `json:"label"`
 				Focused       bool   `json:"focused"`
 				TitleStripped string `json:"terminal_title_stripped"`
+				CWD           string `json:"cwd"`
+				ForegroundCWD string `json:"foreground_cwd"`
 			} `json:"panes"`
 			Agents []struct {
 				AgentStatus   string `json:"agent_status"`
 				WorkspaceID   string `json:"workspace_id"`
 				PaneID        string `json:"pane_id"`
 				Agent         string `json:"agent"`
+				Label         string `json:"label"`
 				TitleStripped string `json:"terminal_title_stripped"`
+				CWD           string `json:"cwd"`
+				ForegroundCWD string `json:"foreground_cwd"`
 			} `json:"agents"`
 			Layouts []struct {
 				TabID         string `json:"tab_id"`
@@ -113,16 +121,39 @@ func decodeSnapshot(data []byte) (*Snapshot, error) {
 			PaneCount: t.PaneCount, Focused: t.Focused,
 		})
 	}
+	paneLabels := map[string]string{}
 	for _, p := range raw.Panes {
+		if p.Label != "" {
+			paneLabels[p.PaneID] = p.Label
+		}
+		title := p.TitleStripped
+		if title == "" {
+			title = p.Label
+		}
+		cwd := p.ForegroundCWD
+		if cwd == "" {
+			cwd = p.CWD
+		}
 		snap.Panes = append(snap.Panes, Pane{
 			PaneID: p.PaneID, TabID: p.TabID, Agent: p.Agent,
-			Focused: p.Focused, Title: p.TitleStripped,
+			Focused: p.Focused, Title: title, CWD: cwd,
 		})
 	}
 	for _, a := range raw.Agents {
+		title := a.TitleStripped
+		if title == "" {
+			title = a.Label
+		}
+		if title == "" {
+			title = paneLabels[a.PaneID]
+		}
+		cwd := a.ForegroundCWD
+		if cwd == "" {
+			cwd = a.CWD
+		}
 		snap.Agents = append(snap.Agents, Agent{
 			Status: a.AgentStatus, WorkspaceID: a.WorkspaceID,
-			PaneID: a.PaneID, Kind: a.Agent, Title: a.TitleStripped,
+			PaneID: a.PaneID, Kind: a.Agent, Title: title, CWD: cwd,
 		})
 	}
 	return snap, nil
