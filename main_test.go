@@ -556,3 +556,108 @@ func TestFastPath(t *testing.T) {
 		t.Errorf("terminal-titles fast path skipped the daemon probe: %v", err)
 	}
 }
+
+// Inside a LINKED git worktree the default prompt title names the BRANCH
+// behind a tree glyph instead of the directory: worktree managers lay
+// checkouts out as <repo>.<branch>, and a 20-rune tab shows little more than
+// the repo name of that. Detection is pure shell (no git spawn per prompt):
+// a linked worktree's root holds a .git FILE pointing under
+// <main>/.git/worktrees/, and the branch is read from that gitdir's HEAD.
+// The main checkout, a submodule (its .git file points under /modules/)
+// and a detached worktree keep the cwd title. `init` bakes the configured
+// tabs.worktree_icon in under the same rules as the shell's own glyph.
+func TestInitShellPromptTitleNamesWorktree(t *testing.T) {
+	requireShell(t, "git")
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "herdr-titles")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v\n%s", err, out)
+	}
+
+	// A real repo with worktrees laid out exactly as `git worktree add` (and
+	// worktrunk) do: siblings of the main checkout, absolute gitdir paths.
+	mainRepo := filepath.Join(dir, "repo")
+	if err := os.MkdirAll(mainRepo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@t"}, args...)...)
+		cmd.Dir = mainRepo
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q", "-b", "main")
+	git("commit", "-q", "--allow-empty", "-m", "init")
+	worktree := filepath.Join(dir, "repo.feature")
+	git("worktree", "add", "-q", "-b", "feature", worktree)
+	nested := filepath.Join(worktree, "sub", "dir")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	detached := filepath.Join(dir, "repo.detached")
+	git("worktree", "add", "-q", "--detach", detached)
+	// A .git file with a RELATIVE gitdir (git itself writes absolute ones,
+	// but the format allows either) resolves against the worktree root.
+	relative := filepath.Join(dir, "relative")
+	if err := os.MkdirAll(relative, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(relative, ".git"), []byte("gitdir: ../repo/.git/worktrees/repo.feature\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A submodule checkout also has a .git file, but under /modules/.
+	submodule := filepath.Join(dir, "submodule")
+	if err := os.MkdirAll(submodule, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(submodule, ".git"), []byte("gitdir: ../repo/.git/modules/submodule\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sink := filepath.Join(dir, "tty.out")
+	promptTitle := func(shell, config, cwd string) string {
+		t.Helper()
+		configDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(configDir, "config.hcl"), []byte(config), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(sink, nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(shell, "-c", `eval "$(`+bin+` init `+shell+`)"; cd `+shellQuote(cwd)+`; _herdr_titles_precmd`)
+		cmd.Env = append(os.Environ(), "HERDR_PANE_ID=x", "HERDR_TAB_ID=x", "HERDR_TITLES_TTY="+sink,
+			"HERDR_PLUGIN_CONFIG_DIR="+configDir, "HERDR_SOCKET_PATH=/nonexistent/herdr.sock")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%s: %v\n%s", shell, err, out)
+		}
+		got, _ := os.ReadFile(sink)
+		return strings.TrimSuffix(strings.TrimPrefix(string(got), "\x1b]2;"), "\a")
+	}
+	iconsOn := "template = \"x\"\ntabs {\n  icons {\n    enabled = true\n  }\n}\n"
+	shellGlyph := map[string]string{"zsh": "", "bash": ""}
+	for _, shell := range []string{"zsh", "bash"} {
+		t.Run(shell, func(t *testing.T) {
+			requireShell(t, shell)
+			cases := []struct{ name, config, cwd, want string }{
+				{"worktree root", iconsOn, worktree, "\U000F0645 feature"},
+				{"worktree subdirectory", iconsOn, nested, "\U000F0645 feature"},
+				{"relative gitdir", iconsOn, relative, "\U000F0645 feature"},
+				{"main checkout", iconsOn, mainRepo, shellGlyph[shell] + " repo"},
+				{"detached worktree", iconsOn, detached, shellGlyph[shell] + " repo.detached"},
+				{"submodule", iconsOn, submodule, shellGlyph[shell] + " submodule"},
+				{"custom glyph", "template = \"x\"\ntabs {\n  worktree_icon = \"W\"\n  icons {\n    enabled = true\n  }\n}\n", worktree, "W feature"},
+				{"glyph disabled", "template = \"x\"\ntabs {\n  worktree_icon = \"\"\n  icons {\n    enabled = true\n  }\n}\n", worktree, "feature"},
+				{"icons off", "template = \"x\"\n", worktree, "feature"},
+				{"style name", "template = \"x\"\ntabs {\n  icons {\n    enabled = true\n    style = \"name\"\n  }\n}\n", worktree, "feature"},
+			}
+			for _, c := range cases {
+				if got := promptTitle(shell, c.config, c.cwd); got != c.want {
+					t.Errorf("%s: prompt title = %q, want %q", c.name, got, c.want)
+				}
+			}
+		})
+	}
+}

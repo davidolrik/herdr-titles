@@ -337,3 +337,31 @@ tabs {
 		t.Errorf("EnvWatchFiles = %v, want %v (tilde expanded)", cfg.EnvWatchFiles, want)
 	}
 }
+
+func TestLoadConfigWorktreeIcon(t *testing.T) {
+	// Default: the nf-md-file_tree glyph.
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.hcl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Tabs.WorktreeIcon != "\U000F0645" {
+		t.Errorf("WorktreeIcon default = %q, want U+F0645", cfg.Tabs.WorktreeIcon)
+	}
+
+	cfg, err = LoadConfig(writeConfig(t, "template = \"x\"\ntabs {\n  worktree_icon = \"W\"\n}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Tabs.WorktreeIcon != "W" {
+		t.Errorf("worktree_icon = \"W\" not honored: %q", cfg.Tabs.WorktreeIcon)
+	}
+
+	// An explicit empty string means "no glyph", not "use the default".
+	cfg, err = LoadConfig(writeConfig(t, "template = \"x\"\ntabs {\n  worktree_icon = \"\"\n}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Tabs.WorktreeIcon != "" {
+		t.Errorf("worktree_icon = \"\" not honored: %q", cfg.Tabs.WorktreeIcon)
+	}
+}

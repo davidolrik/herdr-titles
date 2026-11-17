@@ -35,7 +35,9 @@ mysession : Work @ HQ › myproject › 1 › ×2 ✓1
 - **Terminal titles** — with `tabs { terminal_titles = true }`, a pane whose
   shell (or program) sets a terminal title names its tab after that title,
   with the foreground program name as fallback (should rarely happen if your
-  shell maintains the terminal title reliably). A background multi-pane tab
+  shell maintains the terminal title reliably). The shell integration's
+  default title is the cwd basename, or the branch behind a tree glyph
+  (`󰙅 fix-login`) inside a linked git worktree. A background multi-pane tab
   follows the last-focused pane's title when such a pane known, otherwise
   its name is only updated when it gains focus again.
 - **Live agent session titles** — a tab hosting a coding agent is named
@@ -165,6 +167,20 @@ themselves (nvim with `title` on, ssh) take over while they run, and programs
 that set none (helix, less) name the tab by program via the hook. The title
 only ever names the pane — it never reaches the host window title, which this
 plugin owns.
+
+Inside a **linked git worktree** the default title names the branch behind a
+tree glyph (`󰙅 fix-login`) instead of the directory: worktree managers such as
+[worktrunk](https://github.com/max-sixty/worktrunk) lay checkouts out as
+`<repo>.<branch>`, of which a 20-character tab shows little more than the repo
+name. Detection is pure shell with no `git` spawn per prompt (a linked
+worktree's root holds a `.git` *file* pointing under the main repo's
+`.git/worktrees/`); the main checkout, submodules and detached worktrees keep
+the cwd title. The glyph is `tabs { worktree_icon }` (shown when icons are on;
+`""` leaves the bare branch) and is baked in by `init`, so re-source the
+integration after changing it. fish users can do the same in `fish_title`. A
+custom `_herdr_titles_title` replaces this too; it can call
+`_herdr_titles_worktree` (sets `REPLY` to the branch, fails outside a linked
+worktree) to keep the detection.
 
 The hooks are no-ops outside a herdr pane, background every call so the
 prompt never blocks, and stay registered across re-sourcing. On bash they

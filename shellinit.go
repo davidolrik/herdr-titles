@@ -29,6 +29,11 @@ const hwtBinMarker = "# HWT_BIN"
 // empty (icons off). Only zsh/bash have it — fish_title owns fish's title.
 const hwtShellIconMarker = "# HWT_SHELL_ICON"
 
+// hwtWorktreeIconMarker tags the line that sets the glyph the prompt title
+// puts in front of the branch name inside a linked git worktree; `init`
+// bakes tabs.worktree_icon in under the same rules as the shell's glyph.
+const hwtWorktreeIconMarker = "# HWT_WORKTREE_ICON"
+
 var initShells = []string{"zsh", "bash", "fish"}
 
 // shellIconPrefix is the glyph-plus-space a prompt title starts with for
@@ -46,9 +51,19 @@ func shellIconPrefix(shell string, cfg *TabsConfig) string {
 	return ""
 }
 
-// shellInitScript returns the hook for shell with binPath and the shell's
-// icon prefix baked in.
-func shellInitScript(shell, binPath, iconPrefix string) (string, error) {
+// worktreeIconPrefix is the glyph-plus-space a prompt title starts with
+// inside a linked git worktree, per the icons config: "" when icons are
+// off, the style is "name", or no glyph is configured.
+func worktreeIconPrefix(cfg *TabsConfig) string {
+	if !cfg.Icons.Enabled || cfg.Icons.Style == "name" || cfg.WorktreeIcon == "" {
+		return ""
+	}
+	return cfg.WorktreeIcon + " "
+}
+
+// shellInitScript returns the hook for shell with binPath, the shell's icon
+// prefix and the worktree icon prefix baked in.
+func shellInitScript(shell, binPath, iconPrefix, worktreeIconPrefix string) (string, error) {
 	var ok bool
 	for _, s := range initShells {
 		if s == shell {
@@ -82,6 +97,9 @@ func shellInitScript(shell, binPath, iconPrefix string) (string, error) {
 			// Keep the line's indentation; the value is single-quoted.
 			indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
 			lines[i] = indent + "_hwt_shell_icon=" + shellQuote(iconPrefix)
+		case strings.HasSuffix(trimmed, hwtWorktreeIconMarker):
+			indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+			lines[i] = indent + "_hwt_worktree_icon=" + shellQuote(worktreeIconPrefix)
 		}
 	}
 	if !replaced {
@@ -113,11 +131,12 @@ func runShellInit(args []string) error {
 	// The shell can't read the HCL config, so resolve the shell's icon here
 	// and bake it into the prompt title. A missing/invalid config just means
 	// no icon — the integration must still emit.
-	iconPrefix := ""
+	iconPrefix, worktreePrefix := "", ""
 	if cfg, err := LoadConfig(filepath.Join(pluginConfigDir(), "config.hcl")); err == nil {
 		iconPrefix = shellIconPrefix(args[0], cfg.Tabs)
+		worktreePrefix = worktreeIconPrefix(cfg.Tabs)
 	}
-	script, err := shellInitScript(args[0], exe, iconPrefix)
+	script, err := shellInitScript(args[0], exe, iconPrefix, worktreePrefix)
 	if err != nil {
 		return err
 	}

@@ -113,6 +113,7 @@ type rawTabs struct {
 	TerminalTitles   *bool             `hcl:"terminal_titles,optional"`
 	WatchTitles      *bool             `hcl:"watch_titles,optional"`
 	AgentTitleMaxLen *int              `hcl:"agent_title_max_len,optional"`
+	WorktreeIcon     *string           `hcl:"worktree_icon,optional"`
 	Icons            *rawTabIcons      `hcl:"icons,block"`
 }
 
@@ -273,6 +274,9 @@ func resolveTabs(raw *rawTabs, path, shell string) (*TabsConfig, error) {
 	}
 	if raw.ShellName != "" {
 		tabs.ShellName = raw.ShellName
+	}
+	if raw.WorktreeIcon != nil {
+		tabs.WorktreeIcon = *raw.WorktreeIcon
 	}
 	if raw.Shells != nil {
 		tabs.Shells = raw.Shells

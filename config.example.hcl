@@ -144,6 +144,14 @@ tabs {
   # terminal_titles (which the daemon applies) must stay off.
   watch_titles = true
 
+  # Inside a linked git worktree (git worktree add, worktrunk, ...) the shell
+  # integration's prompt title names the BRANCH behind this glyph instead of
+  # the directory — a <repo>.<branch> checkout otherwise shows little more
+  # than the repo name in a 20-character tab. The main checkout keeps its
+  # cwd title. "" = branch name alone; only shown when icons are enabled.
+  # Baked in by `init <shell>`: re-source the integration after changing it.
+  worktree_icon = "󰙅"
+
   # Nerd Font glyph in front of program names (needs a Nerd Font).
   icons {
     enabled  = false

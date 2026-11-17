@@ -56,7 +56,12 @@ type TabsConfig struct {
 	// WatchTitles enables the per-session daemon that follows agent title
 	// changes (Claude /rename etc.) the moment they happen.
 	WatchTitles bool
-	Icons       IconsConfig
+	// WorktreeIcon is the glyph the shell integration's prompt title puts in
+	// front of the branch name inside a linked git worktree (in place of the
+	// cwd basename, which for a <repo>.<branch> checkout is mostly the repo
+	// name). "" = branch name alone. Only shown when icons are enabled.
+	WorktreeIcon string
+	Icons        IconsConfig
 }
 
 func applySubstitutions(s string, subs []Substitution) string {
@@ -347,6 +352,7 @@ func DefaultTabsConfig() *TabsConfig {
 		AgentTitleMaxLen: 40,
 		TerminalTitles:   false,
 		WatchTitles:      true,
+		WorktreeIcon:     "\U000F0645", // nf-md-file_tree
 		Icons: IconsConfig{
 			Enabled:  false,
 			Style:    "name_and_icon",

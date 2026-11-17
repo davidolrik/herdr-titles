@@ -69,7 +69,41 @@ if [[ -n ${HERDR_PANE_ID:-} && -x $_hwt_bin && -z ${_hwt_installed:-} ]]; then
   # emitted this with icons enabled, "" otherwise. A user-defined
   # _herdr_titles_title replaces the whole string, glyph included.
   _hwt_shell_icon="" # HWT_SHELL_ICON
-  declare -F _herdr_titles_title >/dev/null 2>&1 || _herdr_titles_title() { printf '%s' "${_hwt_shell_icon}${PWD##*/}"; }
+  # Inside a LINKED git worktree the default title is the branch instead:
+  # worktree managers lay checkouts out as <repo>.<branch>, of which a
+  # 20-rune tab shows little more than the repo name. HWT_WORKTREE_ICON is
+  # tabs.worktree_icon (plus a space) when icons are on, "" otherwise.
+  _hwt_worktree_icon="" # HWT_WORKTREE_ICON
+  # Sets REPLY to the branch and succeeds in a linked worktree; fails
+  # elsewhere. Pure shell, no git spawn per prompt: a linked worktree's root
+  # holds a .git FILE ("gitdir: <main>/.git/worktrees/<name>") and the
+  # branch is that gitdir's HEAD. The main checkout (.git is a directory),
+  # a submodule (its .git file points under /modules/) and a detached HEAD
+  # all fail, keeping the cwd title.
+  _herdr_titles_worktree() {
+    local dir=$PWD gitdir head
+    while [[ ! -e $dir/.git ]]; do
+      [[ $dir == / ]] && return 1
+      dir=${dir%/*}
+      [[ -z $dir ]] && dir=/
+    done
+    [[ -f $dir/.git ]] || return 1
+    read -r gitdir < "$dir/.git"
+    gitdir=${gitdir#gitdir: }
+    [[ $gitdir == */worktrees/* ]] || return 1
+    [[ $gitdir == /* ]] || gitdir=$dir/$gitdir
+    read -r head < "$gitdir/HEAD" 2>/dev/null
+    [[ $head == "ref: refs/heads/"* ]] || return 1
+    REPLY=${head#ref: refs/heads/}
+  }
+  declare -F _herdr_titles_title >/dev/null 2>&1 || _herdr_titles_title() {
+    local REPLY
+    if _herdr_titles_worktree; then
+      printf '%s' "${_hwt_worktree_icon}${REPLY}"
+    else
+      printf '%s' "${_hwt_shell_icon}${PWD##*/}"
+    fi
+  }
   _herdr_titles_precmd() { printf '\e]2;%s\a' "$(_herdr_titles_title)" > "${HERDR_TITLES_TTY:-/dev/tty}" 2>/dev/null; }
 
   if declare -p preexec_functions >/dev/null 2>&1 || declare -p precmd_functions >/dev/null 2>&1; then
